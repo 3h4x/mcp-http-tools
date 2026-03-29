@@ -85,7 +85,8 @@ export function buildRequest(toolConfig, args) {
     return encodeURIComponent(String(args[name] ?? ""));
   });
 
-  if (method === "POST") {
+  const bodyMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+  if (bodyMethods.has(method)) {
     const body = {};
     for (const p of toolConfig.params ?? []) {
       if (usedInUrl.has(p.name)) continue;
