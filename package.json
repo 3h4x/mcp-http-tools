@@ -1,0 +1,15 @@
+{
+  "name": "mcp-http-tools",
+  "version": "2.0.0",
+  "description": "Generic MCP-to-HTTP proxy — define tools via YAML config",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "js-yaml": "^4.1.0"
+  }
+}

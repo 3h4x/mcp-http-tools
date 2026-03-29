@@ -1,0 +1,69 @@
+# mcp-http-tools — example configuration
+# Copy to ~/.config/mcp-http-tools/config.yaml to override.
+#
+# Each tool maps to one HTTP request. Define as many as you need.
+
+tools: []
+
+# ── Examples ──────────────────────────────────────────────────────────────
+#
+# tools:
+#   # GET with query params
+#   - name: query_metrics
+#     description: Run a PromQL instant query
+#     method: GET
+#     url: http://localhost:9090/api/v1/query
+#     params:
+#       - name: query
+#         description: PromQL expression
+#         required: true
+#     response:
+#       type: json
+#       path: data.result
+#
+#   # GET with defaults
+#   - name: search_logs
+#     description: Search logs via LogQL
+#     method: GET
+#     url: http://localhost:3100/loki/api/v1/query_range
+#     params:
+#       - name: query
+#         description: LogQL query
+#         required: true
+#       - name: limit
+#         description: Max results
+#         default: "50"
+#     response:
+#       type: json
+#       path: data.result
+#
+#   # POST with JSON body
+#   - name: create_silence
+#     description: Create an Alertmanager silence
+#     method: POST
+#     url: http://localhost:9093/api/v2/silences
+#     params:
+#       - name: matchers
+#         description: JSON array of matchers
+#         required: true
+#       - name: comment
+#         description: Reason for silence
+#         required: true
+#     response:
+#       type: json
+#
+#   # Simple health check (no params)
+#   - name: ping_api
+#     description: Check if the API is up
+#     url: http://localhost:3000/health
+#     response:
+#       type: text
+#
+#   # Auth via env var in headers
+#   - name: list_alerts
+#     description: List active alerts
+#     url: http://localhost:9093/api/v2/alerts
+#     headers:
+#       Authorization: "Bearer ${ALERTMANAGER_TOKEN}"
+#     response:
+#       type: json
