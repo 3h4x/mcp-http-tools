@@ -43,6 +43,7 @@ export function substituteEnvVars(str) {
 // ── config validation ─────────────────────────────────────────────────────
 
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 
 export function validateConfig(config) {
   const errors = [];
@@ -52,6 +53,15 @@ export function validateConfig(config) {
     if (!tool.url) errors.push(`${ref}: missing required field "url"`);
     if (tool.method && !VALID_METHODS.has(tool.method.toUpperCase())) {
       errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
+    }
+    for (const [j, param] of (tool.params ?? []).entries()) {
+      if (!param.name) errors.push(`${ref}: params[${j}] missing required field "name"`);
+    }
+    if (tool.response?.type && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
+      errors.push(`${ref}: invalid response.type "${tool.response.type}" — expected "text" or "json"`);
+    }
+    if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || tool.timeout <= 0)) {
+      errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);
     }
   }
   return errors;

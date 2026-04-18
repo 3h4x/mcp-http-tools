@@ -41,6 +41,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const raw = await res.text();
+    if (!res.ok) {
+      return { content: [{ type: "text", text: `HTTP ${res.status}: ${raw}` }], isError: true };
+    }
     const text = extractResponse(raw, toolConfig.response);
     return { content: [{ type: "text", text }] };
   } catch (err) {

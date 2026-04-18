@@ -1,0 +1,19 @@
+core:
+  - changed-files:
+      - any-glob-to-any-file: ['lib.js', 'index.js']
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: 'test.js'
+
+config:
+  - changed-files:
+      - any-glob-to-any-file: 'config.yaml'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: ['*.md', 'README.md']

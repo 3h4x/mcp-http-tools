@@ -352,6 +352,61 @@ describe("validateConfig", () => {
     const errors = validateConfig(config);
     assert.ok(errors[0].includes("tools[0]"));
   });
+
+  it("reports param missing name", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ type: "string" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("params[0]"));
+    assert.ok(errors[0].includes('"name"'));
+  });
+
+  it("accepts params that all have names", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q" }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports invalid response.type", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "xml" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("xml"));
+    assert.ok(errors[0].includes("response.type"));
+  });
+
+  it("accepts valid response types", () => {
+    for (const type of ["text", "json"]) {
+      const config = { tools: [{ name: "t", url: "http://localhost", response: { type } }] };
+      assert.deepEqual(validateConfig(config), [], `type "${type}" should be valid`);
+    }
+  });
+
+  it("accepts tool with no response config", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost" }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports non-positive timeout", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", timeout: 0 }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("timeout"));
+  });
+
+  it("reports negative timeout", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", timeout: -1000 }] };
+    assert.equal(validateConfig(config).length, 1);
+  });
+
+  it("reports string timeout", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", timeout: "30s" }] };
+    assert.equal(validateConfig(config).length, 1);
+  });
+
+  it("accepts valid positive timeout", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", timeout: 5000 }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
 });
 
 // ── buildRequest POST ─────────────────────────────────────────────────────
@@ -619,5 +674,33 @@ describe("integration", () => {
     const res = await fetch(url, options);
     const raw = await res.text();
     assert.equal(extractResponse(raw, toolConfig.response), "OK");
+  });
+
+  it("non-2xx response exposes status code in text", async () => {
+    const toolConfig = {
+      name: "query",
+      url: "http://localhost/api",
+      params: [{ name: "q" }],
+      response: { type: "json" },
+    };
+
+    const { url, options } = buildRequest(toolConfig, { q: "bad" });
+    mockFetch({ error: "not found" }, 404);
+    const res = await fetch(url, options);
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 404);
+    const raw = await res.text();
+    const responseText = `HTTP ${res.status}: ${raw}`;
+    assert.ok(responseText.startsWith("HTTP 404:"));
+    assert.ok(responseText.includes("not found"));
+  });
+
+  it("5xx response surfaces status in error text", async () => {
+    const toolConfig = { name: "t", url: "http://localhost/api", response: { type: "text" } };
+    const { url, options } = buildRequest(toolConfig, {});
+    mockFetch("Internal Server Error", 500);
+    const res = await fetch(url, options);
+    const raw = await res.text();
+    assert.equal(`HTTP ${res.status}: ${raw}`, "HTTP 500: Internal Server Error");
   });
 });
