@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig } from "./lib.js";
+import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig } from "./lib.js";
 
 // ── resolvePath ───────────────────────────────────────────────────────────
 
@@ -294,6 +294,66 @@ describe("buildRequest GET", () => {
   });
 });
 
+// ── validateConfig ────────────────────────────────────────────────────────
+
+describe("validateConfig", () => {
+  it("returns empty array for empty or missing tools", () => {
+    assert.deepEqual(validateConfig({}), []);
+    assert.deepEqual(validateConfig({ tools: [] }), []);
+  });
+
+  it("returns empty array for valid tool", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost" }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("accepts all valid HTTP methods case-insensitively", () => {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "get", "post"]) {
+      const config = { tools: [{ name: "t", url: "http://localhost", method }] };
+      assert.deepEqual(validateConfig(config), [], `method "${method}" should be valid`);
+    }
+  });
+
+  it("reports missing name", () => {
+    const config = { tools: [{ url: "http://localhost" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"name"'));
+  });
+
+  it("reports missing url", () => {
+    const config = { tools: [{ name: "t" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"url"'));
+  });
+
+  it("reports invalid method with tool name in message", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", method: "FETCH" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("FETCH"));
+    assert.ok(errors[0].includes('"t"'));
+  });
+
+  it("reports multiple errors across multiple tools", () => {
+    const config = {
+      tools: [
+        { url: "http://localhost" },
+        { name: "t" },
+        { name: "t2", url: "http://localhost", method: "BADMETHOD" },
+      ],
+    };
+    assert.equal(validateConfig(config).length, 3);
+  });
+
+  it("includes index in error reference for unnamed tools", () => {
+    const config = { tools: [{ url: "http://localhost" }] };
+    const errors = validateConfig(config);
+    assert.ok(errors[0].includes("tools[0]"));
+  });
+});
+
 // ── buildRequest POST ─────────────────────────────────────────────────────
 
 describe("buildRequest POST", () => {
@@ -356,6 +416,47 @@ describe("buildRequest POST", () => {
     const tc = { method: "POST", url: "http://localhost/api", params: [] };
     const { options } = buildRequest(tc, {});
     assert.deepEqual(JSON.parse(options.body), {});
+  });
+});
+
+// ── buildRequest PUT / PATCH / DELETE ────────────────────────────────────
+
+describe("buildRequest PUT/PATCH/DELETE", () => {
+  for (const method of ["PUT", "PATCH", "DELETE"]) {
+    it(`${method}: builds JSON body and sets Content-Type`, () => {
+      const tc = {
+        method,
+        url: "http://localhost/api",
+        params: [{ name: "value" }],
+      };
+      const { options } = buildRequest(tc, { value: "x" });
+      assert.equal(options.method, method);
+      assert.deepEqual(JSON.parse(options.body), { value: "x" });
+      assert.equal(options.headers["Content-Type"], "application/json");
+    });
+  }
+
+  it("PUT excludes URL path params from body", () => {
+    const tc = {
+      method: "PUT",
+      url: "http://localhost/api/{id}",
+      params: [{ name: "id" }, { name: "data" }],
+    };
+    const { url, options } = buildRequest(tc, { id: "42", data: "payload" });
+    assert.ok(url.includes("/42"));
+    const body = JSON.parse(options.body);
+    assert.equal(body.id, undefined);
+    assert.equal(body.data, "payload");
+  });
+
+  it("DELETE applies param defaults in body", () => {
+    const tc = {
+      method: "DELETE",
+      url: "http://localhost/api",
+      params: [{ name: "reason", default: "expired" }],
+    };
+    const { options } = buildRequest(tc, {});
+    assert.deepEqual(JSON.parse(options.body), { reason: "expired" });
   });
 });
 

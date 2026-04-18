@@ -40,6 +40,23 @@ export function substituteEnvVars(str) {
   return str.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
 }
 
+// ── config validation ─────────────────────────────────────────────────────
+
+const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+
+export function validateConfig(config) {
+  const errors = [];
+  for (const [i, tool] of (config.tools ?? []).entries()) {
+    const ref = `tools[${i}]${tool.name ? ` ("${tool.name}")` : ""}`;
+    if (!tool.name) errors.push(`${ref}: missing required field "name"`);
+    if (!tool.url) errors.push(`${ref}: missing required field "url"`);
+    if (tool.method && !VALID_METHODS.has(tool.method.toUpperCase())) {
+      errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
+    }
+  }
+  return errors;
+}
+
 // ── config → MCP tool schemas ─────────────────────────────────────────────
 
 export function configToTools(config) {

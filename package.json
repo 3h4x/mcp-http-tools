@@ -4,6 +4,9 @@
   "description": "Generic MCP-to-HTTP proxy — define tools via YAML config",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "mcp-http-tools": "./index.js"
+  },
   "scripts": {
     "start": "node index.js",
     "test": "node --test test.js"

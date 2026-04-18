@@ -7,9 +7,11 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig, configToTools, buildRequest, extractResponse } from "./lib.js";
+import { loadConfig, validateConfig, configToTools, buildRequest, extractResponse } from "./lib.js";
 
 const config = loadConfig();
+const configErrors = validateConfig(config);
+for (const e of configErrors) process.stderr.write(`[mcp-http-tools] config error: ${e}\n`);
 const toolConfigs = config.tools ?? [];
 const mcpTools = configToTools(config);
 const toolMap = new Map(toolConfigs.map(t => [t.name, t]));
@@ -23,6 +25,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: mcpTools,
 }));
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   const toolConfig = toolMap.get(name);
@@ -30,14 +34,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
   }
 
+  const { url, options } = buildRequest(toolConfig, args ?? {});
+  const timeout = toolConfig.timeout ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const { url, options } = buildRequest(toolConfig, args ?? {});
-    const res = await fetch(url, options);
+    const res = await fetch(url, { ...options, signal: controller.signal });
     const raw = await res.text();
     const text = extractResponse(raw, toolConfig.response);
     return { content: [{ type: "text", text }] };
   } catch (err) {
-    return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    const msg = err.name === "AbortError" ? `Request timed out after ${timeout}ms` : err.message;
+    return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+  } finally {
+    clearTimeout(timer);
   }
 });
 
