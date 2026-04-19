@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig } from "./lib.js";
+import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool } from "./lib.js";
 
 // ── resolvePath ───────────────────────────────────────────────────────────
 
@@ -178,6 +178,43 @@ describe("configToTools", () => {
     };
     const [tool] = configToTools(config);
     assert.equal(tool.inputSchema.properties.q.description, undefined);
+  });
+
+  it("includes default in property schema when provided", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "limit", default: 50 }],
+      }],
+    };
+    const [tool] = configToTools(config);
+    assert.equal(tool.inputSchema.properties.limit.default, 50);
+  });
+
+  it("includes enum in property schema when provided", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "format", type: "string", enum: ["json", "csv", "xml"] }],
+      }],
+    };
+    const [tool] = configToTools(config);
+    assert.deepEqual(tool.inputSchema.properties.format.enum, ["json", "csv", "xml"]);
+  });
+
+  it("omits enum and default from property when not provided", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "q" }],
+      }],
+    };
+    const [tool] = configToTools(config);
+    assert.equal(tool.inputSchema.properties.q.enum, undefined);
+    assert.equal(tool.inputSchema.properties.q.default, undefined);
   });
 });
 
@@ -405,6 +442,106 @@ describe("validateConfig", () => {
 
   it("accepts valid positive timeout", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", timeout: 5000 }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports duplicate tool names", () => {
+    const config = { tools: [
+      { name: "t", url: "http://localhost" },
+      { name: "t", url: "http://localhost/other" },
+    ] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("duplicate"));
+    assert.ok(errors[0].includes('"t"'));
+  });
+
+  it("allows distinct tool names", () => {
+    const config = { tools: [
+      { name: "first", url: "http://localhost/a" },
+      { name: "second", url: "http://localhost/b" },
+    ] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports tool name with spaces", () => {
+    const config = { tools: [{ name: "my tool", url: "http://localhost" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tool name"));
+  });
+
+  it("reports tool name starting with a digit", () => {
+    const config = { tools: [{ name: "1tool", url: "http://localhost" }] };
+    assert.equal(validateConfig(config).length, 1);
+  });
+
+  it("accepts tool names with underscores and hyphens", () => {
+    const config = { tools: [{ name: "get_user-info", url: "http://localhost" }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports invalid URL", () => {
+    const config = { tools: [{ name: "t", url: "not-a-url" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"url"'));
+  });
+
+  it("accepts URL with path param placeholders", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{id}/data" }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports invalid param type", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", type: "str" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"str"'));
+    assert.ok(errors[0].includes("params[0]"));
+  });
+
+  it("accepts all valid param types", () => {
+    for (const type of ["string", "number", "integer", "boolean", "array", "object"]) {
+      const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "p", type }] }] };
+      assert.deepEqual(validateConfig(config), [], `param type "${type}" should be valid`);
+    }
+  });
+
+  it("reports duplicate param names within a tool", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q" }, { name: "q" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("duplicate param name"));
+    assert.ok(errors[0].includes('"q"'));
+  });
+
+  it("allows same param name in different tools", () => {
+    const config = {
+      tools: [
+        { name: "a", url: "http://localhost", params: [{ name: "q" }] },
+        { name: "b", url: "http://localhost", params: [{ name: "q" }] },
+      ],
+    };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports empty response.path", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", path: "" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.path"));
+  });
+
+  it("reports whitespace-only response.path", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", path: "   " } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.path"));
+  });
+
+  it("accepts valid response.path", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", path: "data.result" } }] };
     assert.deepEqual(validateConfig(config), []);
   });
 });
@@ -676,31 +813,69 @@ describe("integration", () => {
     assert.equal(extractResponse(raw, toolConfig.response), "OK");
   });
 
-  it("non-2xx response exposes status code in text", async () => {
+  it("callTool: non-2xx response exposes status code and marks isError", async () => {
     const toolConfig = {
       name: "query",
       url: "http://localhost/api",
       params: [{ name: "q" }],
       response: { type: "json" },
     };
-
-    const { url, options } = buildRequest(toolConfig, { q: "bad" });
     mockFetch({ error: "not found" }, 404);
-    const res = await fetch(url, options);
-    assert.equal(res.ok, false);
-    assert.equal(res.status, 404);
-    const raw = await res.text();
-    const responseText = `HTTP ${res.status}: ${raw}`;
-    assert.ok(responseText.startsWith("HTTP 404:"));
-    assert.ok(responseText.includes("not found"));
+    const { text, isError } = await callTool(toolConfig, { q: "bad" });
+    assert.equal(isError, true);
+    assert.ok(text.startsWith("HTTP 404:"));
+    assert.ok(text.includes("not found"));
   });
 
-  it("5xx response surfaces status in error text", async () => {
+  it("callTool: 5xx response surfaces status in error text", async () => {
     const toolConfig = { name: "t", url: "http://localhost/api", response: { type: "text" } };
-    const { url, options } = buildRequest(toolConfig, {});
     mockFetch("Internal Server Error", 500);
-    const res = await fetch(url, options);
-    const raw = await res.text();
-    assert.equal(`HTTP ${res.status}: ${raw}`, "HTTP 500: Internal Server Error");
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.equal(text, "HTTP 500: Internal Server Error");
+  });
+
+  it("callTool: truncates oversized error bodies to keep context bounded", async () => {
+    const huge = "x".repeat(5000);
+    const toolConfig = { name: "t", url: "http://localhost/api", response: { type: "text" } };
+    mockFetch(huge, 500);
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.ok(text.includes("(truncated, showing 2000/5000 chars)"));
+    assert.ok(text.length < 5000, `expected truncated output, got ${text.length} chars`);
+  });
+
+  it("callTool: success path extracts response via path", async () => {
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      response: { type: "json", path: "data.value" },
+    };
+    mockFetch({ data: { value: 42 } });
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "42");
+  });
+
+  it("callTool: times out after configured timeout", async () => {
+    globalThis.fetch = (_url, options) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve({ ok: true, status: 200, text: async () => "late" }), 200);
+      options?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+      });
+    });
+    const toolConfig = { name: "t", url: "http://localhost/api", timeout: 50 };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.ok(text.includes("timed out"), `expected timeout message, got: ${text}`);
+  });
+
+  it("callTool: network error returns isError with message", async () => {
+    globalThis.fetch = async () => { throw new Error("ECONNREFUSED"); };
+    const toolConfig = { name: "t", url: "http://localhost/api" };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.ok(text.includes("ECONNREFUSED"));
   });
 });

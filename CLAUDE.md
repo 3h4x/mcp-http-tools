@@ -7,7 +7,8 @@ Generic MCP-to-HTTP proxy. Define any HTTP API as an MCP tool via YAML config.
 ```
 YAML config → configToTools() → MCP tool schemas
                                         ↓
-MCP client calls tool → buildRequest() → fetch() → extractResponse() → MCP response
+MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ timeout)
+                                   └─► extractResponse() → MCP response
 ```
 
 - `lib.js` — all logic: config loading, schema generation, request building, response extraction
@@ -20,7 +21,9 @@ MCP client calls tool → buildRequest() → fetch() → extractResponse() → M
 |----------|---------|
 | `loadConfig()` | Loads YAML from global → local → empty fallback |
 | `configToTools(config)` | Generates MCP tool schemas from config |
+| `validateConfig(config)` | Returns array of config error messages (startup validation) |
 | `buildRequest(toolConfig, args)` | Builds `{ url, options }` for fetch |
+| `callTool(toolConfig, args)` | End-to-end tool invocation: build → fetch (w/ timeout) → extract. Returns `{ text, isError? }` |
 | `extractResponse(raw, responseConfig)` | Formats response (text passthrough or JSON path extraction) |
 | `resolvePath(obj, path)` | Dot-notation object traversal |
 | `substituteEnvVars(str)` | `${VAR}` → `process.env.VAR` replacement |
@@ -36,7 +39,7 @@ MCP client calls tool → buildRequest() → fetch() → extractResponse() → M
 ## Commands
 
 ```bash
-pnpm test        # 53 tests
+pnpm test        # 90 tests
 node index.js    # start MCP server (stdio)
 ```
 

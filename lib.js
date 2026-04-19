@@ -44,21 +44,58 @@ export function substituteEnvVars(str) {
 
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
+const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
+const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 
 export function validateConfig(config) {
   const errors = [];
+  const seenNames = new Set();
   for (const [i, tool] of (config.tools ?? []).entries()) {
     const ref = `tools[${i}]${tool.name ? ` ("${tool.name}")` : ""}`;
-    if (!tool.name) errors.push(`${ref}: missing required field "name"`);
-    if (!tool.url) errors.push(`${ref}: missing required field "url"`);
+    if (!tool.name) {
+      errors.push(`${ref}: missing required field "name"`);
+    } else {
+      if (!TOOL_NAME_RE.test(tool.name)) {
+        errors.push(`${ref}: tool name must start with a letter or underscore and contain only letters, digits, underscores, or hyphens`);
+      }
+      if (seenNames.has(tool.name)) {
+        errors.push(`${ref}: duplicate tool name "${tool.name}"`);
+      } else {
+        seenNames.add(tool.name);
+      }
+    }
+    if (!tool.url) {
+      errors.push(`${ref}: missing required field "url"`);
+    } else {
+      try {
+        new URL(tool.url.replace(/\{[^}]+\}/g, "x"));
+      } catch {
+        errors.push(`${ref}: "url" is not a valid URL`);
+      }
+    }
     if (tool.method && !VALID_METHODS.has(tool.method.toUpperCase())) {
       errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
     }
+    const seenParams = new Set();
     for (const [j, param] of (tool.params ?? []).entries()) {
-      if (!param.name) errors.push(`${ref}: params[${j}] missing required field "name"`);
+      if (!param.name) {
+        errors.push(`${ref}: params[${j}] missing required field "name"`);
+      } else {
+        if (seenParams.has(param.name)) {
+          errors.push(`${ref}: params[${j}] duplicate param name "${param.name}"`);
+        } else {
+          seenParams.add(param.name);
+        }
+      }
+      if (param.type && !VALID_PARAM_TYPES.has(param.type)) {
+        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
+      }
     }
     if (tool.response?.type && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
       errors.push(`${ref}: invalid response.type "${tool.response.type}" — expected "text" or "json"`);
+    }
+    if (tool.response?.path !== undefined && (typeof tool.response.path !== "string" || tool.response.path.trim() === "")) {
+      errors.push(`${ref}: "response.path" must be a non-empty string`);
     }
     if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || tool.timeout <= 0)) {
       errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);
@@ -78,6 +115,8 @@ export function configToTools(config) {
       properties[p.name] = {
         type: p.type ?? "string",
         ...(p.description && { description: p.description }),
+        ...(p.enum && { enum: p.enum }),
+        ...(p.default !== undefined && { default: p.default }),
       };
       if (p.required) required.push(p.name);
     }
@@ -146,6 +185,34 @@ export function buildRequest(toolConfig, args) {
     url: url.toString(),
     options: { method, ...(Object.keys(headers).length && { headers }) },
   };
+}
+
+// ── tool invocation ───────────────────────────────────────────────────────
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_ERROR_BODY_CHARS = 2000;
+
+export async function callTool(toolConfig, args) {
+  const { url, options } = buildRequest(toolConfig, args ?? {});
+  const timeout = toolConfig.timeout ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    const raw = await res.text();
+    if (!res.ok) {
+      const body = raw.length > MAX_ERROR_BODY_CHARS
+        ? `${raw.slice(0, MAX_ERROR_BODY_CHARS)}… (truncated, showing ${MAX_ERROR_BODY_CHARS}/${raw.length} chars)`
+        : raw;
+      return { text: `HTTP ${res.status}: ${body}`, isError: true };
+    }
+    return { text: extractResponse(raw, toolConfig.response) };
+  } catch (err) {
+    const msg = err.name === "AbortError" ? `Request timed out after ${timeout}ms` : err.message;
+    return { text: `Error: ${msg}`, isError: true };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── format response ───────────────────────────────────────────────────────
