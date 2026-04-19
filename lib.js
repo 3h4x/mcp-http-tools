@@ -1,7 +1,3 @@
-/**
- * mcp-http-tools — generic HTTP-to-MCP proxy engine.
- */
-
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,8 +5,6 @@ import { homedir } from "node:os";
 import yaml from "js-yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// ── config ────────────────────────────────────────────────────────────────
 
 export function loadConfig() {
   const paths = [
@@ -22,8 +16,6 @@ export function loadConfig() {
   }
   return {};
 }
-
-// ── helpers ───────────────────────────────────────────────────────────────
 
 export function resolvePath(obj, path) {
   if (!path) return obj;
@@ -39,8 +31,6 @@ export function resolvePath(obj, path) {
 export function substituteEnvVars(str) {
   return str.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
 }
-
-// ── config validation ─────────────────────────────────────────────────────
 
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
@@ -104,8 +94,6 @@ export function validateConfig(config) {
   return errors;
 }
 
-// ── config → MCP tool schemas ─────────────────────────────────────────────
-
 export function configToTools(config) {
   const tools = config.tools ?? [];
   return tools.map(t => {
@@ -132,9 +120,7 @@ export function configToTools(config) {
   });
 }
 
-// ── build fetch request from tool config + args ───────────────────────────
-
-export function buildRequest(toolConfig, args) {
+export function buildRequest(toolConfig, args = {}) {
   const method = (toolConfig.method ?? "GET").toUpperCase();
   const headers = {};
 
@@ -144,7 +130,6 @@ export function buildRequest(toolConfig, args) {
     }
   }
 
-  // Replace {param} placeholders in the URL with arg values
   const usedInUrl = new Set();
   const resolvedUrl = toolConfig.url.replace(/\{(\w+)\}/g, (_, name) => {
     usedInUrl.add(name);
@@ -171,7 +156,6 @@ export function buildRequest(toolConfig, args) {
     };
   }
 
-  // GET
   const url = new URL(resolvedUrl);
   for (const p of toolConfig.params ?? []) {
     if (usedInUrl.has(p.name)) continue;
@@ -186,8 +170,6 @@ export function buildRequest(toolConfig, args) {
     options: { method, ...(Object.keys(headers).length && { headers }) },
   };
 }
-
-// ── tool invocation ───────────────────────────────────────────────────────
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ERROR_BODY_CHARS = 2000;
@@ -214,8 +196,6 @@ export async function callTool(toolConfig, args) {
     clearTimeout(timer);
   }
 }
-
-// ── format response ───────────────────────────────────────────────────────
 
 export function extractResponse(raw, responseConfig) {
   const type = responseConfig?.type ?? "text";

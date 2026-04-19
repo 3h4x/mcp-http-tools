@@ -1,9 +1,3 @@
-/**
- * mcp-http-proxy tests
- *
- * Run: node --test test.js
- */
-
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
@@ -328,6 +322,12 @@ describe("buildRequest GET", () => {
     const tc = { method: "get", url: "http://localhost/api", params: [] };
     const { options } = buildRequest(tc, {});
     assert.equal(options.method, "GET");
+  });
+
+  it("defaults args to empty object when called with no second argument", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "limit", default: "10" }] };
+    const { url } = buildRequest(tc);
+    assert.ok(new URL(url).searchParams.get("limit") === "10");
   });
 });
 
@@ -877,5 +877,26 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, {});
     assert.equal(isError, true);
     assert.ok(text.includes("ECONNREFUSED"));
+  });
+
+  it("callTool: null args falls back to empty object without throwing", async () => {
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      params: [{ name: "limit", default: "5" }],
+      response: { type: "text" },
+    };
+    mockFetch("ok");
+    const { text, isError } = await callTool(toolConfig, null);
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+  });
+
+  it("callTool: undefined args falls back to empty object without throwing", async () => {
+    const toolConfig = { name: "t", url: "http://localhost/api", response: { type: "text" } };
+    mockFetch("ok");
+    const { text, isError } = await callTool(toolConfig, undefined);
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
   });
 });
