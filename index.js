@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * mcp-http-proxy
+ * mcp-http-tools
  * Generic MCP server — tools defined via YAML config, each maps to an HTTP request.
  */
 

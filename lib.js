@@ -12,7 +12,13 @@ export function loadConfig() {
     resolve(__dirname, "config.yaml"),
   ];
   for (const p of paths) {
-    if (existsSync(p)) return yaml.load(readFileSync(p, "utf8"));
+    if (!existsSync(p)) continue;
+    try {
+      return yaml.load(readFileSync(p, "utf8")) ?? {};
+    } catch (err) {
+      process.stderr.write(`[mcp-http-tools] failed to parse config at ${p}: ${err.message}\n`);
+      return {};
+    }
   }
   return {};
 }
@@ -211,7 +217,9 @@ export function extractResponse(raw, responseConfig) {
 
   if (responseConfig?.path) {
     const extracted = resolvePath(parsed, responseConfig.path);
-    return extracted === undefined ? raw : JSON.stringify(extracted, null, 2);
+    if (extracted === undefined) return raw;
+    if (typeof extracted === "string") return extracted;
+    return JSON.stringify(extracted, null, 2);
   }
   return JSON.stringify(parsed, null, 2);
 }
