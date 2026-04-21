@@ -6,12 +6,12 @@ import yaml from "js-yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function loadConfig() {
-  const paths = [
+export function loadConfig(paths) {
+  const defaultPaths = [
     join(homedir(), ".config", "mcp-http-tools", "config.yaml"),
     resolve(__dirname, "config.yaml"),
   ];
-  for (const p of paths) {
+  for (const p of paths ?? defaultPaths) {
     if (!existsSync(p)) continue;
     try {
       return yaml.load(readFileSync(p, "utf8")) ?? {};
@@ -35,7 +35,13 @@ export function resolvePath(obj, path) {
 }
 
 export function substituteEnvVars(str) {
-  return str.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
+  return str.replace(/\$\{(\w+)\}/g, (_, name) => {
+    if (!(name in process.env)) {
+      process.stderr.write(`[mcp-http-tools] warning: env var "${name}" is not set\n`);
+      return "";
+    }
+    return process.env[name];
+  });
 }
 
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
@@ -126,13 +132,14 @@ export function configToTools(config) {
   });
 }
 
-export function buildRequest(toolConfig, args = {}) {
+export function buildRequest(toolConfig, args) {
+  args = args ?? {};
   const method = (toolConfig.method ?? "GET").toUpperCase();
   const headers = {};
 
   if (toolConfig.headers) {
     for (const [k, v] of Object.entries(toolConfig.headers)) {
-      headers[k] = substituteEnvVars(v);
+      headers[k] = substituteEnvVars(v).replace(/[\r\n]/g, "");
     }
   }
 
@@ -166,9 +173,11 @@ export function buildRequest(toolConfig, args = {}) {
   for (const p of toolConfig.params ?? []) {
     if (usedInUrl.has(p.name)) continue;
     if (p.name in args) {
-      url.searchParams.set(p.name, String(args[p.name]));
+      const val = args[p.name];
+      url.searchParams.set(p.name, (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val));
     } else if (p.default !== undefined) {
-      url.searchParams.set(p.name, String(p.default));
+      const val = p.default;
+      url.searchParams.set(p.name, (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val));
     }
   }
   return {
@@ -207,7 +216,6 @@ export function extractResponse(raw, responseConfig) {
   const type = responseConfig?.type ?? "text";
   if (type === "text") return raw;
 
-  // json
   let parsed;
   try {
     parsed = JSON.parse(raw);

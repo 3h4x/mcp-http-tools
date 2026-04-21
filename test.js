@@ -67,6 +67,25 @@ describe("substituteEnvVars", () => {
     assert.equal(substituteEnvVars("${__TEST_VAR__}-${__TEST_VAR2__}"), "secret123-world");
     delete process.env.__TEST_VAR2__;
   });
+
+  it("writes warning to stderr for unset env vars", () => {
+    const original = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    process.stderr.write = (msg) => { captured += msg; return true; };
+    substituteEnvVars("${DEFINITELY_NOT_SET_VAR_XYZ_123}");
+    process.stderr.write = original;
+    assert.ok(captured.includes("DEFINITELY_NOT_SET_VAR_XYZ_123"), "expected warning in stderr");
+    assert.ok(captured.includes("not set"), "expected 'not set' in warning");
+  });
+
+  it("does not warn for env vars that are set", () => {
+    const original = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    process.stderr.write = (msg) => { captured += msg; return true; };
+    substituteEnvVars("${__TEST_VAR__}");
+    process.stderr.write = original;
+    assert.equal(captured, "");
+  });
 });
 
 // ── configToTools ─────────────────────────────────────────────────────────
@@ -328,6 +347,49 @@ describe("buildRequest GET", () => {
     const tc = { url: "http://localhost/api", params: [{ name: "limit", default: "10" }] };
     const { url } = buildRequest(tc);
     assert.ok(new URL(url).searchParams.get("limit") === "10");
+  });
+
+  it("treats null args same as empty object", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "limit", default: "10" }] };
+    const { url } = buildRequest(tc, null);
+    assert.equal(new URL(url).searchParams.get("limit"), "10");
+  });
+
+  it("serializes array param as JSON string in query", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "tags", type: "array" }] };
+    const { url } = buildRequest(tc, { tags: ["a", "b", "c"] });
+    assert.equal(new URL(url).searchParams.get("tags"), '["a","b","c"]');
+  });
+
+  it("serializes object param as JSON string in query", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "filter", type: "object" }] };
+    const { url } = buildRequest(tc, { filter: { key: "value" } });
+    assert.equal(new URL(url).searchParams.get("filter"), '{"key":"value"}');
+  });
+
+  it("strips CRLF from header values to prevent injection", () => {
+    const tc = {
+      url: "http://localhost/api",
+      headers: { Authorization: "Bearer token\r\nX-Injected: evil" },
+      params: [],
+    };
+    const { options } = buildRequest(tc, {});
+    assert.ok(!options.headers.Authorization.includes("\r"), "CR must be stripped");
+    assert.ok(!options.headers.Authorization.includes("\n"), "LF must be stripped");
+    assert.equal(options.headers.Authorization, "Bearer tokenX-Injected: evil");
+  });
+
+  it("strips CRLF from header values after env var substitution", () => {
+    process.env.__CRLF_TOKEN__ = "abc\r\ndef";
+    const tc = {
+      url: "http://localhost/api",
+      headers: { Authorization: "Bearer ${__CRLF_TOKEN__}" },
+      params: [],
+    };
+    const { options } = buildRequest(tc, {});
+    assert.ok(!options.headers.Authorization.includes("\r"));
+    assert.ok(!options.headers.Authorization.includes("\n"));
+    delete process.env.__CRLF_TOKEN__;
   });
 });
 
@@ -714,28 +776,54 @@ describe("extractResponse", () => {
 // ── loadConfig ────────────────────────────────────────────────────────────
 
 describe("loadConfig", () => {
-  it("returns an object", () => {
+  it("returns empty object when no paths exist", () => {
+    assert.deepEqual(loadConfig(["/nonexistent/path/config.yaml"]), {});
+  });
+
+  it("returns empty array when paths list is empty", () => {
+    assert.deepEqual(loadConfig([]), {});
+  });
+
+  it("loads valid config from an explicit path", () => {
+    const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "config.yaml");
+    writeFileSync(p, "tools:\n  - name: t\n    url: http://localhost\n");
+    const result = loadConfig([p]);
+    assert.equal(result.tools.length, 1);
+    assert.equal(result.tools[0].name, "t");
+    rmSync(dir, { recursive: true });
+  });
+
+  it("returns empty object and writes to stderr when config YAML is malformed", () => {
+    const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "config.yaml");
+    writeFileSync(p, "tools:\n  - name: [invalid yaml\n");
+    const original = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    process.stderr.write = (msg) => { captured += msg; return true; };
+    const result = loadConfig([p]);
+    process.stderr.write = original;
+    assert.deepEqual(result, {});
+    assert.ok(captured.includes("failed to parse"), `expected parse error in stderr, got: ${captured}`);
+    rmSync(dir, { recursive: true });
+  });
+
+  it("skips non-existent paths and loads the first existing one", () => {
+    const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "config.yaml");
+    writeFileSync(p, "tools: []\n");
+    const result = loadConfig(["/does/not/exist.yaml", p]);
+    assert.deepEqual(result, { tools: [] });
+    rmSync(dir, { recursive: true });
+  });
+
+  it("uses default paths when called with no argument", () => {
     const config = loadConfig();
     assert.equal(typeof config, "object");
     assert.notEqual(config, null);
-  });
-
-  it("returns empty object and writes to stderr when config YAML is malformed", async () => {
-    const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
-    mkdirSync(dir, { recursive: true });
-    const badConfig = join(dir, "config.yaml");
-    writeFileSync(badConfig, "tools:\n  - name: [invalid yaml\n");
-
-    // Temporarily override HOME so loadConfig finds our bad file first.
-    // We monkey-patch the module by writing to an env var and using a wrapper.
-    // Instead, test via a dynamic import with a patched homedir isn't easy in ESM.
-    // So we verify loadConfig handles malformed yaml gracefully via direct file read.
-    const { load } = await import("js-yaml");
-    let threw = false;
-    try { load(readFileSync(badConfig, "utf8")); } catch { threw = true; }
-    assert.ok(threw, "js-yaml should throw on malformed YAML");
-
-    rmSync(dir, { recursive: true });
   });
 });
 

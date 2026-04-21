@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-/**
- * mcp-http-tools
- * Generic MCP server — tools defined via YAML config, each maps to an HTTP request.
- */
-
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -11,7 +6,10 @@ import { loadConfig, validateConfig, configToTools, callTool } from "./lib.js";
 
 const config = loadConfig();
 const configErrors = validateConfig(config);
-for (const e of configErrors) process.stderr.write(`[mcp-http-tools] config error: ${e}\n`);
+if (configErrors.length > 0) {
+  for (const e of configErrors) process.stderr.write(`[mcp-http-tools] config error: ${e}\n`);
+  process.exit(1);
+}
 const toolConfigs = config.tools ?? [];
 const mcpTools = configToTools(config);
 const toolMap = new Map(toolConfigs.map(t => [t.name, t]));
