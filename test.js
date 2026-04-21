@@ -391,6 +391,38 @@ describe("buildRequest GET", () => {
     assert.ok(!options.headers.Authorization.includes("\n"));
     delete process.env.__CRLF_TOKEN__;
   });
+
+  it("skips param with undefined value instead of sending 'undefined' string", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "q" }, { name: "limit", default: "5" }] };
+    const { url } = buildRequest(tc, { q: undefined });
+    const parsed = new URL(url);
+    assert.equal(parsed.searchParams.get("q"), null, "undefined arg must not appear in query");
+    assert.equal(parsed.searchParams.get("limit"), "5", "default should still apply");
+  });
+
+  it("sends false boolean as string 'false' in query", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "active", type: "boolean" }] };
+    const { url } = buildRequest(tc, { active: false });
+    assert.equal(new URL(url).searchParams.get("active"), "false");
+  });
+
+  it("sends zero as string '0' in query", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "offset", type: "integer" }] };
+    const { url } = buildRequest(tc, { offset: 0 });
+    assert.equal(new URL(url).searchParams.get("offset"), "0");
+  });
+
+  it("sends false boolean default as string 'false' in query", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "verbose", type: "boolean", default: false }] };
+    const { url } = buildRequest(tc, {});
+    assert.equal(new URL(url).searchParams.get("verbose"), "false");
+  });
+
+  it("serializes array default as JSON string in query", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "tags", type: "array", default: ["a", "b"] }] };
+    const { url } = buildRequest(tc, {});
+    assert.equal(new URL(url).searchParams.get("tags"), '["a","b"]');
+  });
 });
 
 // ── validateConfig ────────────────────────────────────────────────────────
@@ -671,6 +703,36 @@ describe("buildRequest POST", () => {
     const { options } = buildRequest(tc, {});
     assert.deepEqual(JSON.parse(options.body), {});
   });
+
+  it("skips param with undefined value — not sent as null in body", () => {
+    const tc = {
+      method: "POST",
+      url: "http://localhost/api",
+      params: [{ name: "q" }, { name: "format", default: "json" }],
+    };
+    const { options } = buildRequest(tc, { q: undefined });
+    const body = JSON.parse(options.body);
+    assert.equal("q" in body, false, "undefined arg must be omitted from body");
+    assert.equal(body.format, "json", "default should still apply");
+  });
+
+  it("preserves false boolean in body", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "active", type: "boolean" }] };
+    const { options } = buildRequest(tc, { active: false });
+    assert.strictEqual(JSON.parse(options.body).active, false);
+  });
+
+  it("preserves zero in body", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "offset", type: "integer" }] };
+    const { options } = buildRequest(tc, { offset: 0 });
+    assert.strictEqual(JSON.parse(options.body).offset, 0);
+  });
+
+  it("preserves false boolean default in body", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "verbose", type: "boolean", default: false }] };
+    const { options } = buildRequest(tc, {});
+    assert.strictEqual(JSON.parse(options.body).verbose, false);
+  });
 });
 
 // ── buildRequest PUT / PATCH / DELETE ────────────────────────────────────
@@ -770,6 +832,21 @@ describe("extractResponse", () => {
   it("returns URL strings via path without extra quoting", () => {
     const raw = JSON.stringify({ links: { self: "https://example.com/api/v1" } });
     assert.equal(extractResponse(raw, { type: "json", path: "links.self" }), "https://example.com/api/v1");
+  });
+
+  it("returns 'null' string when path resolves to null", () => {
+    const raw = JSON.stringify({ data: null });
+    assert.equal(extractResponse(raw, { type: "json", path: "data" }), "null");
+  });
+
+  it("returns 'false' string when path resolves to boolean false", () => {
+    const raw = JSON.stringify({ enabled: false });
+    assert.equal(extractResponse(raw, { type: "json", path: "enabled" }), "false");
+  });
+
+  it("returns '0' string when path resolves to zero", () => {
+    const raw = JSON.stringify({ count: 0 });
+    assert.equal(extractResponse(raw, { type: "json", path: "count" }), "0");
   });
 });
 

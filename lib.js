@@ -154,7 +154,7 @@ export function buildRequest(toolConfig, args) {
     const body = {};
     for (const p of toolConfig.params ?? []) {
       if (usedInUrl.has(p.name)) continue;
-      if (p.name in args) {
+      if (p.name in args && args[p.name] !== undefined) {
         body[p.name] = args[p.name];
       } else if (p.default !== undefined) {
         body[p.name] = p.default;
@@ -172,7 +172,7 @@ export function buildRequest(toolConfig, args) {
   const url = new URL(resolvedUrl);
   for (const p of toolConfig.params ?? []) {
     if (usedInUrl.has(p.name)) continue;
-    if (p.name in args) {
+    if (p.name in args && args[p.name] !== undefined) {
       const val = args[p.name];
       url.searchParams.set(p.name, (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val));
     } else if (p.default !== undefined) {
