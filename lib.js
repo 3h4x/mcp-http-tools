@@ -51,6 +51,10 @@ const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 
 export function validateConfig(config) {
   const errors = [];
+  if (config.tools != null && !Array.isArray(config.tools)) {
+    errors.push('"tools" must be an array');
+    return errors;
+  }
   const seenNames = new Set();
   for (const [i, tool] of (config.tools ?? []).entries()) {
     const ref = `tools[${i}]${tool.name ? ` ("${tool.name}")` : ""}`;
@@ -116,7 +120,7 @@ export function validateConfig(config) {
 }
 
 export function configToTools(config) {
-  const tools = config.tools ?? [];
+  const tools = Array.isArray(config.tools) ? config.tools : [];
   return tools.map(t => {
     const properties = {};
     const required = [];
@@ -136,6 +140,7 @@ export function configToTools(config) {
         type: "object",
         properties,
         ...(required.length && { required }),
+        additionalProperties: false,
       },
     };
   });
@@ -199,7 +204,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ERROR_BODY_CHARS = 2000;
 
 export async function callTool(toolConfig, args) {
-  const { url, options } = buildRequest(toolConfig, args ?? {});
+  const { url, options } = buildRequest(toolConfig, args);
   const timeout = toolConfig.timeout ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);

@@ -229,6 +229,17 @@ describe("configToTools", () => {
     assert.equal(tool.inputSchema.properties.q.enum, undefined);
     assert.equal(tool.inputSchema.properties.q.default, undefined);
   });
+
+  it("schema includes additionalProperties: false", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost" }] };
+    const [tool] = configToTools(config);
+    assert.equal(tool.inputSchema.additionalProperties, false);
+  });
+
+  it("returns empty array when tools is non-array (type mismatch)", () => {
+    assert.deepEqual(configToTools({ tools: "oops" }), []);
+    assert.deepEqual(configToTools({ tools: 42 }), []);
+  });
 });
 
 // ── buildRequest GET ──────────────────────────────────────────────────────
@@ -667,6 +678,19 @@ describe("validateConfig", () => {
   it("accepts valid response.path", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", path: "data.result" } }] };
     assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports error when tools is a string instead of array", () => {
+    const errors = validateConfig({ tools: "oops" });
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"tools"'));
+    assert.ok(errors[0].includes("array"));
+  });
+
+  it("reports error when tools is a number instead of array", () => {
+    const errors = validateConfig({ tools: 42 });
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"tools"'));
   });
 });
 
