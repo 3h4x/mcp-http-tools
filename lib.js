@@ -74,6 +74,12 @@ export function validateConfig(config) {
       } catch {
         errors.push(`${ref}: "url" is not a valid URL`);
       }
+      const paramNames = new Set((tool.params ?? []).map(p => p.name).filter(Boolean));
+      for (const [, ph] of tool.url.matchAll(/\{(\w+)\}/g)) {
+        if (!paramNames.has(ph)) {
+          errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
+        }
+      }
     }
     if (tool.method && !VALID_METHODS.has(tool.method.toUpperCase())) {
       errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
@@ -98,6 +104,9 @@ export function validateConfig(config) {
     }
     if (tool.response?.path !== undefined && (typeof tool.response.path !== "string" || tool.response.path.trim() === "")) {
       errors.push(`${ref}: "response.path" must be a non-empty string`);
+    }
+    if (tool.response?.path !== undefined && (tool.response?.type ?? "text") !== "json") {
+      errors.push(`${ref}: "response.path" requires response.type "json"`);
     }
     if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || tool.timeout <= 0)) {
       errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);

@@ -583,8 +583,38 @@ describe("validateConfig", () => {
   });
 
   it("accepts URL with path param placeholders", () => {
-    const config = { tools: [{ name: "t", url: "http://localhost/api/{id}/data" }] };
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{id}/data", params: [{ name: "id" }] }] };
     assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports URL placeholder without matching param definition", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{id}", params: [{ name: "query" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("{id}"), `expected error about {id}, got: ${errors[0]}`);
+  });
+
+  it("reports URL placeholder when no params defined at all", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{org}/{repo}" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 2);
+    assert.ok(errors.some(e => e.includes("{org}")));
+    assert.ok(errors.some(e => e.includes("{repo}")));
+  });
+
+  it("reports response.path without response.type json", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { path: "data.result" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.path"), `expected error about response.path, got: ${errors[0]}`);
+    assert.ok(errors[0].includes('"json"'), `expected mention of "json", got: ${errors[0]}`);
+  });
+
+  it("reports response.path when response.type is text", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "text", path: "data.result" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.path"));
   });
 
   it("reports invalid param type", () => {
