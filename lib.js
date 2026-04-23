@@ -35,7 +35,7 @@ export function resolvePath(obj, path) {
 }
 
 export function substituteEnvVars(str) {
-  return str.replace(/\$\{(\w+)\}/g, (_, name) => {
+  return String(str).replace(/\$\{(\w+)\}/g, (_, name) => {
     if (!(name in process.env)) {
       process.stderr.write(`[mcp-http-tools] warning: env var "${name}" is not set\n`);
       return "";
@@ -57,6 +57,10 @@ export function validateConfig(config) {
   }
   const seenNames = new Set();
   for (const [i, tool] of (config.tools ?? []).entries()) {
+    if (tool == null || typeof tool !== "object" || Array.isArray(tool)) {
+      errors.push(`tools[${i}]: entry must be an object`);
+      continue;
+    }
     const ref = `tools[${i}]${tool.name ? ` ("${tool.name}")` : ""}`;
     if (!tool.name) {
       errors.push(`${ref}: missing required field "name"`);
@@ -78,7 +82,7 @@ export function validateConfig(config) {
       } catch {
         errors.push(`${ref}: "url" is not a valid URL`);
       }
-      const paramNames = new Set((tool.params ?? []).map(p => p.name).filter(Boolean));
+      const paramNames = new Set((tool.params ?? []).map(p => p?.name).filter(Boolean));
       for (const [, ph] of tool.url.matchAll(/\{(\w+)\}/g)) {
         if (!paramNames.has(ph)) {
           errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
@@ -90,6 +94,10 @@ export function validateConfig(config) {
     }
     const seenParams = new Set();
     for (const [j, param] of (tool.params ?? []).entries()) {
+      if (param == null || typeof param !== "object" || Array.isArray(param)) {
+        errors.push(`${ref}: params[${j}] must be an object`);
+        continue;
+      }
       if (!param.name) {
         errors.push(`${ref}: params[${j}] missing required field "name"`);
       } else {
@@ -101,6 +109,17 @@ export function validateConfig(config) {
       }
       if (param.type && !VALID_PARAM_TYPES.has(param.type)) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
+      }
+    }
+    if (tool.headers !== undefined && tool.headers !== null) {
+      if (typeof tool.headers !== "object" || Array.isArray(tool.headers)) {
+        errors.push(`${ref}: "headers" must be an object`);
+      } else {
+        for (const [k, v] of Object.entries(tool.headers)) {
+          if (typeof v !== "string" && typeof v !== "number") {
+            errors.push(`${ref}: headers["${k}"] must be a string or number`);
+          }
+        }
       }
     }
     if (tool.response?.type && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
@@ -204,11 +223,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ERROR_BODY_CHARS = 2000;
 
 export async function callTool(toolConfig, args) {
-  const { url, options } = buildRequest(toolConfig, args);
   const timeout = toolConfig.timeout ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
+    const { url, options } = buildRequest(toolConfig, args);
     const res = await fetch(url, { ...options, signal: controller.signal });
     const raw = await res.text();
     if (!res.ok) {
@@ -219,7 +238,7 @@ export async function callTool(toolConfig, args) {
     }
     return { text: extractResponse(raw, toolConfig.response) };
   } catch (err) {
-    const msg = err.name === "AbortError" ? `Request timed out after ${timeout}ms` : err.message;
+    const msg = err.name === "AbortError" ? `Request timed out after ${timeout}ms` : (err.message ?? String(err));
     return { text: `Error: ${msg}`, isError: true };
   } finally {
     clearTimeout(timer);

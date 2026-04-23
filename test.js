@@ -86,6 +86,26 @@ describe("substituteEnvVars", () => {
     process.stderr.write = original;
     assert.equal(captured, "");
   });
+
+  it("returns empty string unchanged when input is empty", () => {
+    assert.equal(substituteEnvVars(""), "");
+  });
+
+  it("does not warn when env var is set to empty string", () => {
+    process.env.__EMPTY_VAR__ = "";
+    const original = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    process.stderr.write = (msg) => { captured += msg; return true; };
+    const result = substituteEnvVars("${__EMPTY_VAR__}");
+    process.stderr.write = original;
+    delete process.env.__EMPTY_VAR__;
+    assert.equal(result, "");
+    assert.equal(captured, "", "no warning expected for set-but-empty var");
+  });
+
+  it("coerces non-string input to string before substitution", () => {
+    assert.equal(substituteEnvVars(123), "123");
+  });
 });
 
 // ── configToTools ─────────────────────────────────────────────────────────
@@ -434,6 +454,20 @@ describe("buildRequest GET", () => {
     const { url } = buildRequest(tc, {});
     assert.equal(new URL(url).searchParams.get("tags"), '["a","b"]');
   });
+
+  it("sends null arg value as string 'null' in query", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "filter" }] };
+    const { url } = buildRequest(tc, { filter: null });
+    assert.equal(new URL(url).searchParams.get("filter"), "null");
+  });
+
+  it("ignores extra keys in args that have no matching param", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "q" }] };
+    const { url } = buildRequest(tc, { q: "hello", unknown: "ignored" });
+    const parsed = new URL(url);
+    assert.equal(parsed.searchParams.get("q"), "hello");
+    assert.equal(parsed.searchParams.get("unknown"), null);
+  });
 });
 
 // ── validateConfig ────────────────────────────────────────────────────────
@@ -680,6 +714,31 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("accepts valid headers object", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", headers: { Authorization: "Bearer token", "X-Custom": "value" } }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports error when headers is an array", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", headers: ["bad"] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"headers"'));
+  });
+
+  it("reports error when a header value is not a string", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", headers: { Authorization: { token: "secret" } } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("headers["));
+    assert.ok(errors[0].includes("Authorization"));
+  });
+
+  it("accepts numeric header values", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", headers: { "X-Version": 2 } }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
   it("reports error when tools is a string instead of array", () => {
     const errors = validateConfig({ tools: "oops" });
     assert.equal(errors.length, 1);
@@ -691,6 +750,27 @@ describe("validateConfig", () => {
     const errors = validateConfig({ tools: 42 });
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes('"tools"'));
+  });
+
+  it("reports error for null tool entry without throwing", () => {
+    const errors = validateConfig({ tools: [null] });
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tools[0]"));
+    assert.ok(errors[0].includes("object"));
+  });
+
+  it("reports error for string tool entry without throwing", () => {
+    const errors = validateConfig({ tools: ["my-tool"] });
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tools[0]"));
+  });
+
+  it("reports error for null param entry without throwing", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [null] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("params[0]"));
+    assert.ok(errors[0].includes("object"));
   });
 });
 
@@ -902,6 +982,14 @@ describe("extractResponse", () => {
     const raw = JSON.stringify({ count: 0 });
     assert.equal(extractResponse(raw, { type: "json", path: "count" }), "0");
   });
+
+  it("returns empty string unchanged when type is text", () => {
+    assert.equal(extractResponse("", { type: "text" }), "");
+  });
+
+  it("returns empty string unchanged when json parse fails on empty input", () => {
+    assert.equal(extractResponse("", { type: "json" }), "");
+  });
 });
 
 // ── loadConfig ────────────────────────────────────────────────────────────
@@ -955,6 +1043,16 @@ describe("loadConfig", () => {
     const config = loadConfig();
     assert.equal(typeof config, "object");
     assert.notEqual(config, null);
+  });
+
+  it("returns empty object for an empty YAML file", () => {
+    const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "config.yaml");
+    writeFileSync(p, "");
+    const result = loadConfig([p]);
+    assert.deepEqual(result, {});
+    rmSync(dir, { recursive: true });
   });
 });
 
@@ -1145,5 +1243,28 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, undefined);
     assert.equal(isError, undefined);
     assert.equal(text, "ok");
+  });
+
+  it("callTool: success with no response config passes raw text through", async () => {
+    const toolConfig = { name: "t", url: "http://localhost/api" };
+    mockFetch("raw output");
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "raw output");
+  });
+
+  it("callTool: numeric header value is coerced without throwing", async () => {
+    const toolConfig = { name: "t", url: "http://localhost/api", headers: { "X-Version": 2 } };
+    mockFetch("ok");
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+  });
+
+  it("callTool: missing url returns isError instead of throwing", async () => {
+    const toolConfig = { name: "t" };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.ok(typeof text === "string" && text.length > 0);
   });
 });
