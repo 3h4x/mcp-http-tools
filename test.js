@@ -487,6 +487,24 @@ describe("buildRequest GET", () => {
     assert.equal(url, "http://api.example.com/v1/users");
     delete process.env.__TEST_BASE__;
   });
+
+  it("appends params to URL that already has a query string", () => {
+    const tc = {
+      url: "http://localhost/api?version=2&format=json",
+      params: [{ name: "q" }],
+    };
+    const { url } = buildRequest(tc, { q: "hello" });
+    const parsed = new URL(url);
+    assert.equal(parsed.searchParams.get("version"), "2");
+    assert.equal(parsed.searchParams.get("format"), "json");
+    assert.equal(parsed.searchParams.get("q"), "hello");
+  });
+
+  it("sends empty string arg as empty query param", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "q" }] };
+    const { url } = buildRequest(tc, { q: "" });
+    assert.equal(new URL(url).searchParams.get("q"), "");
+  });
 });
 
 // ── validateConfig ────────────────────────────────────────────────────────
@@ -859,6 +877,25 @@ describe("validateConfig", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", required: true }] }] };
     assert.deepEqual(validateConfig(config), []);
   });
+
+  it("accepts valid URL with existing query string", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api?version=2&format=json" }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports error when header value is null", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", headers: { Authorization: null } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("Authorization"));
+  });
+
+  it("reports error when header value is a boolean", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", headers: { "X-Debug": true } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("X-Debug"));
+  });
 });
 
 // ── buildRequest POST ─────────────────────────────────────────────────────
@@ -1107,6 +1144,16 @@ describe("extractResponse", () => {
 
   it("returns empty string unchanged when json parse fails on empty input", () => {
     assert.equal(extractResponse("", { type: "json" }), "");
+  });
+
+  it("returns empty string when json parse fails on empty input with path", () => {
+    assert.equal(extractResponse("", { type: "json", path: "data.result" }), "");
+  });
+
+  it("returns array extracted via path as pretty JSON", () => {
+    const raw = JSON.stringify({ items: [{ id: 1 }, { id: 2 }] });
+    const result = extractResponse(raw, { type: "json", path: "items" });
+    assert.deepEqual(JSON.parse(result), [{ id: 1 }, { id: 2 }]);
   });
 });
 
@@ -1410,5 +1457,31 @@ describe("integration", () => {
     assert.ok(timedOut.text.includes("timed out"));
     assert.equal(succeeded.isError, undefined);
     assert.equal(succeeded.text, "ok");
+  });
+
+  it("callTool: success with json type and no path pretty-prints", async () => {
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      response: { type: "json" },
+    };
+    mockFetch({ status: "ok", count: 3 });
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.status, "ok");
+    assert.equal(parsed.count, 3);
+  });
+
+  it("callTool: json path missing in response falls back to raw JSON", async () => {
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      response: { type: "json", path: "no.such.key" },
+    };
+    mockFetch({ status: "ok" });
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.ok(text.includes("ok"), `expected raw JSON fallback, got: ${text}`);
   });
 });

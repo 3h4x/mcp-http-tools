@@ -214,17 +214,19 @@ export function buildRequest(toolConfig, args) {
   for (const p of toolConfig.params ?? []) {
     if (usedInUrl.has(p.name)) continue;
     if (p.name in args && args[p.name] !== undefined) {
-      const val = args[p.name];
-      url.searchParams.set(p.name, (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val));
+      url.searchParams.set(p.name, toQueryString(args[p.name]));
     } else if (p.default !== undefined) {
-      const val = p.default;
-      url.searchParams.set(p.name, (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val));
+      url.searchParams.set(p.name, toQueryString(p.default));
     }
   }
   return {
     url: url.toString(),
     options: { method, ...(Object.keys(headers).length && { headers }) },
   };
+}
+
+function toQueryString(val) {
+  return (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val);
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
