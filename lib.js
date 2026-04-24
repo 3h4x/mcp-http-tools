@@ -77,13 +77,15 @@ export function validateConfig(config) {
     if (!tool.url) {
       errors.push(`${ref}: missing required field "url"`);
     } else {
-      try {
-        new URL(tool.url.replace(/\{[^}]+\}/g, "x"));
-      } catch {
-        errors.push(`${ref}: "url" is not a valid URL`);
+      if (!tool.url.includes("${")) {
+        try {
+          new URL(tool.url.replace(/\{[^}]+\}/g, "x"));
+        } catch {
+          errors.push(`${ref}: "url" is not a valid URL`);
+        }
       }
-      const paramNames = new Set((tool.params ?? []).map(p => p?.name).filter(Boolean));
-      for (const [, ph] of tool.url.matchAll(/\{(\w+)\}/g)) {
+      const paramNames = new Set((Array.isArray(tool.params) ? tool.params : []).map(p => p?.name).filter(Boolean));
+      for (const [, ph] of tool.url.matchAll(/(?<!\$)\{(\w+)\}/g)) {
         if (!paramNames.has(ph)) {
           errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
         }
@@ -92,8 +94,11 @@ export function validateConfig(config) {
     if (tool.method && !VALID_METHODS.has(tool.method.toUpperCase())) {
       errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
     }
+    if (tool.params != null && !Array.isArray(tool.params)) {
+      errors.push(`${ref}: "params" must be an array`);
+    }
     const seenParams = new Set();
-    for (const [j, param] of (tool.params ?? []).entries()) {
+    for (const [j, param] of (Array.isArray(tool.params) ? tool.params : []).entries()) {
       if (param == null || typeof param !== "object" || Array.isArray(param)) {
         errors.push(`${ref}: params[${j}] must be an object`);
         continue;
@@ -106,6 +111,9 @@ export function validateConfig(config) {
         } else {
           seenParams.add(param.name);
         }
+      }
+      if (param.required === true && param.default !== undefined) {
+        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} cannot have both "required: true" and a "default"`);
       }
       if (param.type && !VALID_PARAM_TYPES.has(param.type)) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
@@ -131,7 +139,7 @@ export function validateConfig(config) {
     if (tool.response?.path !== undefined && (tool.response?.type ?? "text") !== "json") {
       errors.push(`${ref}: "response.path" requires response.type "json"`);
     }
-    if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || tool.timeout <= 0)) {
+    if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || !Number.isFinite(tool.timeout) || tool.timeout <= 0)) {
       errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);
     }
   }
@@ -177,7 +185,7 @@ export function buildRequest(toolConfig, args) {
   }
 
   const usedInUrl = new Set();
-  const resolvedUrl = toolConfig.url.replace(/\{(\w+)\}/g, (_, name) => {
+  const resolvedUrl = substituteEnvVars(toolConfig.url).replace(/\{(\w+)\}/g, (_, name) => {
     usedInUrl.add(name);
     return encodeURIComponent(String(args[name] ?? ""));
   });
@@ -193,7 +201,7 @@ export function buildRequest(toolConfig, args) {
         body[p.name] = p.default;
       }
     }
-    if (!headers["Content-Type"]) {
+    if (!Object.keys(headers).some(k => k.toLowerCase() === "content-type")) {
       headers["Content-Type"] = "application/json";
     }
     return {

@@ -468,6 +468,25 @@ describe("buildRequest GET", () => {
     assert.equal(parsed.searchParams.get("q"), "hello");
     assert.equal(parsed.searchParams.get("unknown"), null);
   });
+
+  it("substitutes ${ENV_VAR} in URL before building request", () => {
+    process.env.__TEST_BASE__ = "http://api.example.com";
+    const tc = { url: "${__TEST_BASE__}/v1/query", params: [{ name: "q" }] };
+    const { url } = buildRequest(tc, { q: "test" });
+    assert.ok(url.startsWith("http://api.example.com/v1/query"), `got: ${url}`);
+    delete process.env.__TEST_BASE__;
+  });
+
+  it("substitutes ${ENV_VAR} in URL combined with {param} path substitution", () => {
+    process.env.__TEST_BASE__ = "http://api.example.com";
+    const tc = {
+      url: "${__TEST_BASE__}/v1/{resource}",
+      params: [{ name: "resource", required: true }],
+    };
+    const { url } = buildRequest(tc, { resource: "users" });
+    assert.equal(url, "http://api.example.com/v1/users");
+    delete process.env.__TEST_BASE__;
+  });
 });
 
 // ── validateConfig ────────────────────────────────────────────────────────
@@ -772,6 +791,74 @@ describe("validateConfig", () => {
     assert.ok(errors[0].includes("params[0]"));
     assert.ok(errors[0].includes("object"));
   });
+
+  it("reports error for array tool entry without throwing", () => {
+    const errors = validateConfig({ tools: [["a", "b"]] });
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tools[0]"));
+    assert.ok(errors[0].includes("object"));
+  });
+
+  it("reports error for array param entry without throwing", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [["p1", "p2"]] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("params[0]"));
+    assert.ok(errors[0].includes("object"));
+  });
+
+  it("reports NaN timeout", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", timeout: NaN }] };
+    assert.equal(validateConfig(config).length, 1);
+  });
+
+  it("reports Infinity timeout", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", timeout: Infinity }] };
+    assert.equal(validateConfig(config).length, 1);
+  });
+
+  it("accepts URL with ${ENV_VAR} placeholder without reporting invalid URL", () => {
+    const config = { tools: [{ name: "t", url: "${API_BASE}/api/v1" }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("accepts URL combining ${ENV_VAR} and {param} placeholders", () => {
+    const config = { tools: [{ name: "t", url: "${API_BASE}/api/{id}", params: [{ name: "id" }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports error when params is an object instead of array", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: { name: "q" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"params"'));
+    assert.ok(errors[0].includes("array"));
+  });
+
+  it("reports error when params is a string instead of array", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: "q" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"params"'));
+  });
+
+  it("reports error when param has both required:true and a default", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", required: true, default: "foo" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"q"'));
+    assert.ok(errors[0].includes("required") && errors[0].includes("default"));
+  });
+
+  it("does not report error when param has required:false and a default", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", required: false, default: "foo" }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("does not report error when param has required:true and no default", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", required: true }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
 });
 
 // ── buildRequest POST ─────────────────────────────────────────────────────
@@ -866,6 +953,37 @@ describe("buildRequest POST", () => {
     const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "verbose", type: "boolean", default: false }] };
     const { options } = buildRequest(tc, {});
     assert.strictEqual(JSON.parse(options.body).verbose, false);
+  });
+
+  it("preserves array value in body without double-serializing", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "tags", type: "array" }] };
+    const { options } = buildRequest(tc, { tags: ["a", "b", "c"] });
+    assert.deepEqual(JSON.parse(options.body).tags, ["a", "b", "c"]);
+  });
+
+  it("preserves object value in body without double-serializing", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "filter", type: "object" }] };
+    const { options } = buildRequest(tc, { filter: { key: "value" } });
+    assert.deepEqual(JSON.parse(options.body).filter, { key: "value" });
+  });
+
+  it("preserves null in body", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "filter" }] };
+    const { options } = buildRequest(tc, { filter: null });
+    assert.strictEqual(JSON.parse(options.body).filter, null);
+  });
+
+  it("does not duplicate Content-Type when config uses lowercase content-type header", () => {
+    const tc = {
+      method: "POST",
+      url: "http://localhost/api",
+      headers: { "content-type": "text/plain" },
+      params: [],
+    };
+    const { options } = buildRequest(tc, {});
+    const ctKeys = Object.keys(options.headers).filter(k => k.toLowerCase() === "content-type");
+    assert.equal(ctKeys.length, 1, "only one content-type header key expected");
+    assert.equal(options.headers["content-type"], "text/plain");
   });
 });
 
@@ -1266,5 +1384,31 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, {});
     assert.equal(isError, true);
     assert.ok(typeof text === "string" && text.length > 0);
+  });
+
+  it("callTool: non-Error thrown value uses String(err) fallback", async () => {
+    globalThis.fetch = async () => { throw "something went wrong"; };
+    const toolConfig = { name: "t", url: "http://localhost/api" };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.ok(text.includes("something went wrong"), `expected err string in text, got: ${text}`);
+  });
+
+  it("callTool: concurrent calls have isolated AbortControllers", async () => {
+    globalThis.fetch = (_url, opts) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve({ ok: true, status: 200, text: async () => "ok" }), 30);
+      opts?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+      });
+    });
+    const [timedOut, succeeded] = await Promise.all([
+      callTool({ name: "fast", url: "http://localhost/api", timeout: 10 }, {}),
+      callTool({ name: "slow", url: "http://localhost/api", timeout: 5000 }, {}),
+    ]);
+    assert.equal(timedOut.isError, true);
+    assert.ok(timedOut.text.includes("timed out"));
+    assert.equal(succeeded.isError, undefined);
+    assert.equal(succeeded.text, "ok");
   });
 });
