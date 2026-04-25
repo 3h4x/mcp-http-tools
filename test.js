@@ -72,8 +72,11 @@ describe("substituteEnvVars", () => {
     const original = process.stderr.write.bind(process.stderr);
     let captured = "";
     process.stderr.write = (msg) => { captured += msg; return true; };
-    substituteEnvVars("${DEFINITELY_NOT_SET_VAR_XYZ_123}");
-    process.stderr.write = original;
+    try {
+      substituteEnvVars("${DEFINITELY_NOT_SET_VAR_XYZ_123}");
+    } finally {
+      process.stderr.write = original;
+    }
     assert.ok(captured.includes("DEFINITELY_NOT_SET_VAR_XYZ_123"), "expected warning in stderr");
     assert.ok(captured.includes("not set"), "expected 'not set' in warning");
   });
@@ -82,8 +85,11 @@ describe("substituteEnvVars", () => {
     const original = process.stderr.write.bind(process.stderr);
     let captured = "";
     process.stderr.write = (msg) => { captured += msg; return true; };
-    substituteEnvVars("${__TEST_VAR__}");
-    process.stderr.write = original;
+    try {
+      substituteEnvVars("${__TEST_VAR__}");
+    } finally {
+      process.stderr.write = original;
+    }
     assert.equal(captured, "");
   });
 
@@ -96,9 +102,13 @@ describe("substituteEnvVars", () => {
     const original = process.stderr.write.bind(process.stderr);
     let captured = "";
     process.stderr.write = (msg) => { captured += msg; return true; };
-    const result = substituteEnvVars("${__EMPTY_VAR__}");
-    process.stderr.write = original;
-    delete process.env.__EMPTY_VAR__;
+    let result;
+    try {
+      result = substituteEnvVars("${__EMPTY_VAR__}");
+    } finally {
+      process.stderr.write = original;
+      delete process.env.__EMPTY_VAR__;
+    }
     assert.equal(result, "");
     assert.equal(captured, "", "no warning expected for set-but-empty var");
   });
@@ -504,6 +514,36 @@ describe("buildRequest GET", () => {
     const tc = { url: "http://localhost/api", params: [{ name: "q" }] };
     const { url } = buildRequest(tc, { q: "" });
     assert.equal(new URL(url).searchParams.get("q"), "");
+  });
+
+  it("substitutes empty string for missing path param arg", () => {
+    const tc = {
+      url: "http://localhost/api/{id}/details",
+      params: [{ name: "id", required: true }],
+    };
+    const { url } = buildRequest(tc, {});
+    assert.ok(url.includes("//details"), `expected empty segment, got: ${url}`);
+  });
+
+  it("treats params: null same as no params", () => {
+    const tc = { url: "http://localhost/api", params: null };
+    const { url, options } = buildRequest(tc, {});
+    assert.equal(url, "http://localhost/api");
+    assert.equal(options.method, "GET");
+  });
+
+  it("throws descriptive error when url is missing", () => {
+    assert.throws(
+      () => buildRequest({ name: "t" }, {}),
+      /missing.*url/i
+    );
+  });
+
+  it("throws descriptive error when env var in URL resolves to invalid URL", () => {
+    assert.throws(
+      () => buildRequest({ url: "${__UNSET_MCP_BASE_XYZ__}/api" }, {}),
+      /Invalid URL/i
+    );
   });
 });
 
@@ -1010,6 +1050,13 @@ describe("buildRequest POST", () => {
     assert.strictEqual(JSON.parse(options.body).filter, null);
   });
 
+  it("treats params: null same as no params", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: null };
+    const { options } = buildRequest(tc, {});
+    assert.deepEqual(JSON.parse(options.body), {});
+    assert.equal(options.headers["Content-Type"], "application/json");
+  });
+
   it("does not duplicate Content-Type when config uses lowercase content-type header", () => {
     const tc = {
       method: "POST",
@@ -1173,10 +1220,13 @@ describe("loadConfig", () => {
     mkdirSync(dir, { recursive: true });
     const p = join(dir, "config.yaml");
     writeFileSync(p, "tools:\n  - name: t\n    url: http://localhost\n");
-    const result = loadConfig([p]);
-    assert.equal(result.tools.length, 1);
-    assert.equal(result.tools[0].name, "t");
-    rmSync(dir, { recursive: true });
+    try {
+      const result = loadConfig([p]);
+      assert.equal(result.tools.length, 1);
+      assert.equal(result.tools[0].name, "t");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
   });
 
   it("returns empty object and writes to stderr when config YAML is malformed", () => {
@@ -1187,11 +1237,15 @@ describe("loadConfig", () => {
     const original = process.stderr.write.bind(process.stderr);
     let captured = "";
     process.stderr.write = (msg) => { captured += msg; return true; };
-    const result = loadConfig([p]);
-    process.stderr.write = original;
+    let result;
+    try {
+      result = loadConfig([p]);
+    } finally {
+      process.stderr.write = original;
+      rmSync(dir, { recursive: true });
+    }
     assert.deepEqual(result, {});
     assert.ok(captured.includes("failed to parse"), `expected parse error in stderr, got: ${captured}`);
-    rmSync(dir, { recursive: true });
   });
 
   it("skips non-existent paths and loads the first existing one", () => {
@@ -1199,9 +1253,12 @@ describe("loadConfig", () => {
     mkdirSync(dir, { recursive: true });
     const p = join(dir, "config.yaml");
     writeFileSync(p, "tools: []\n");
-    const result = loadConfig(["/does/not/exist.yaml", p]);
-    assert.deepEqual(result, { tools: [] });
-    rmSync(dir, { recursive: true });
+    try {
+      const result = loadConfig(["/does/not/exist.yaml", p]);
+      assert.deepEqual(result, { tools: [] });
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
   });
 
   it("uses default paths when called with no argument", () => {
@@ -1215,9 +1272,37 @@ describe("loadConfig", () => {
     mkdirSync(dir, { recursive: true });
     const p = join(dir, "config.yaml");
     writeFileSync(p, "");
-    const result = loadConfig([p]);
-    assert.deepEqual(result, {});
-    rmSync(dir, { recursive: true });
+    try {
+      const result = loadConfig([p]);
+      assert.deepEqual(result, {});
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("stops at first existing path even when malformed — does not fall through to next", () => {
+    const dir1 = join(tmpdir(), `mcp-test-bad-${Date.now()}`);
+    const dir2 = join(tmpdir(), `mcp-test-good-${Date.now()}`);
+    mkdirSync(dir1, { recursive: true });
+    mkdirSync(dir2, { recursive: true });
+    try {
+      const badPath = join(dir1, "config.yaml");
+      const goodPath = join(dir2, "config.yaml");
+      writeFileSync(badPath, "tools:\n  - name: [invalid yaml\n");
+      writeFileSync(goodPath, "tools:\n  - name: fallback\n    url: http://localhost\n");
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = () => true;
+      let result;
+      try {
+        result = loadConfig([badPath, goodPath]);
+      } finally {
+        process.stderr.write = original;
+      }
+      assert.deepEqual(result, {}, "malformed first path should return {} without falling through");
+    } finally {
+      rmSync(dir1, { recursive: true });
+      rmSync(dir2, { recursive: true });
+    }
   });
 });
 
@@ -1431,6 +1516,7 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, {});
     assert.equal(isError, true);
     assert.ok(typeof text === "string" && text.length > 0);
+    assert.ok(text.toLowerCase().includes("url"), `expected url-related error, got: ${text}`);
   });
 
   it("callTool: non-Error thrown value uses String(err) fallback", async () => {

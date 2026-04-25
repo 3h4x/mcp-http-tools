@@ -175,6 +175,7 @@ export function configToTools(config) {
 
 export function buildRequest(toolConfig, args) {
   args = args ?? {};
+  if (!toolConfig.url) throw new Error('tool config is missing required "url" field');
   const method = (toolConfig.method ?? "GET").toUpperCase();
   const headers = {};
 
@@ -210,7 +211,12 @@ export function buildRequest(toolConfig, args) {
     };
   }
 
-  const url = new URL(resolvedUrl);
+  let url;
+  try {
+    url = new URL(resolvedUrl);
+  } catch {
+    throw new Error(`Invalid URL after resolving placeholders: "${resolvedUrl}"`);
+  }
   for (const p of toolConfig.params ?? []) {
     if (usedInUrl.has(p.name)) continue;
     if (p.name in args && args[p.name] !== undefined) {
