@@ -545,6 +545,17 @@ describe("buildRequest GET", () => {
       /Invalid URL/i
     );
   });
+
+  it("coerces numeric header value to string", () => {
+    const tc = {
+      url: "http://localhost/api",
+      headers: { "X-Version": 2 },
+      params: [],
+    };
+    const { options } = buildRequest(tc, {});
+    assert.equal(options.headers["X-Version"], "2");
+    assert.equal(typeof options.headers["X-Version"], "string");
+  });
 });
 
 // ── validateConfig ────────────────────────────────────────────────────────
@@ -935,6 +946,20 @@ describe("validateConfig", () => {
     const errors = validateConfig(config);
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes("X-Debug"));
+  });
+
+  it("reports error for number tool entry without throwing", () => {
+    const errors = validateConfig({ tools: [42] });
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tools[0]"));
+    assert.ok(errors[0].includes("object"));
+  });
+
+  it("reports error for boolean tool entry without throwing", () => {
+    const errors = validateConfig({ tools: [true] });
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tools[0]"));
+    assert.ok(errors[0].includes("object"));
   });
 });
 
@@ -1569,5 +1594,43 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, {});
     assert.equal(isError, undefined);
     assert.ok(text.includes("ok"), `expected raw JSON fallback, got: ${text}`);
+  });
+
+  it("callTool: POST sends body and returns extracted response", async () => {
+    let capturedBody;
+    globalThis.fetch = async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true, status: 200, text: async () => JSON.stringify({ id: "42", status: "created" }) };
+    };
+    const toolConfig = {
+      name: "create_item",
+      method: "POST",
+      url: "http://localhost/api/{id}",
+      params: [
+        { name: "id", required: true },
+        { name: "status", required: true },
+        { name: "priority", default: "normal" },
+      ],
+      response: { type: "json", path: "status" },
+    };
+    const { text, isError } = await callTool(toolConfig, { id: "42", status: "active" });
+    assert.equal(isError, undefined);
+    assert.equal(text, "created");
+    assert.equal(capturedBody.status, "active");
+    assert.equal(capturedBody.priority, "normal");
+    assert.equal(capturedBody.id, undefined, "path param must not appear in body");
+  });
+
+  it("callTool: POST non-2xx marks isError", async () => {
+    const toolConfig = {
+      name: "create_item",
+      method: "POST",
+      url: "http://localhost/api",
+      params: [{ name: "name", required: true }],
+    };
+    mockFetch({ error: "conflict" }, 409);
+    const { text, isError } = await callTool(toolConfig, { name: "dup" });
+    assert.equal(isError, true);
+    assert.ok(text.startsWith("HTTP 409:"));
   });
 });
