@@ -270,6 +270,13 @@ describe("configToTools", () => {
     assert.deepEqual(configToTools({ tools: "oops" }), []);
     assert.deepEqual(configToTools({ tools: 42 }), []);
   });
+
+  it("treats params: null same as no params", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: null }] };
+    const [tool] = configToTools(config);
+    assert.deepEqual(tool.inputSchema.properties, {});
+    assert.equal(tool.inputSchema.required, undefined);
+  });
 });
 
 // ── buildRequest GET ──────────────────────────────────────────────────────
@@ -960,6 +967,21 @@ describe("validateConfig", () => {
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes("tools[0]"));
     assert.ok(errors[0].includes("object"));
+  });
+
+  it("reports error when response.path is null (bare YAML key)", () => {
+    // YAML `path:` with no value produces null — should be caught
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", path: null } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.path"));
+  });
+
+  it("reports error when response.path is a number", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", path: 42 } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.path"));
   });
 });
 
