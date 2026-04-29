@@ -39,7 +39,7 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 ## Commands
 
 ```bash
-pnpm test        # 90 tests
+pnpm test        # ~190+ tests (count grows; run to verify)
 node index.js    # start MCP server (stdio)
 ```
 
@@ -87,13 +87,9 @@ node index.js    # start MCP server (stdio)
 ## Next steps
 
 ### Before publishing
-- **Config validation** — `validateConfig()` on startup: check required fields (`name`, `url`), valid `method`, clear error messages for typos
-- **Request timeouts** — per-tool `timeout` field (default 30s), so a hanging API doesn't block the server
-- **`npx` support** — add `"bin"` to package.json so `npx mcp-http-tools` works without cloning
 - **GitHub Actions** — CI workflow to run tests on push/PR, release workflow for npm publish on tag (reuse patterns from existing repos)
 
 ### Future
-- **All HTTP methods** — PUT/PATCH/DELETE body handling (currently only POST builds a body)
 - **Response transforms** — beyond dot-path: templates or formatters for human-readable output
 - **Config merging** — load both global and local, merge tools arrays (shared + project-specific)
 - **Auth presets** — `auth: bearer_env: MY_TOKEN` shorthand instead of full headers
