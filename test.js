@@ -1097,6 +1097,18 @@ describe("buildRequest POST", () => {
     assert.strictEqual(JSON.parse(options.body).filter, null);
   });
 
+  it("applies array default to body without double-serializing", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "tags", type: "array", default: ["x", "y"] }] };
+    const { options } = buildRequest(tc, {});
+    assert.deepEqual(JSON.parse(options.body).tags, ["x", "y"]);
+  });
+
+  it("applies object default to body without double-serializing", () => {
+    const tc = { method: "POST", url: "http://localhost/api", params: [{ name: "filter", type: "object", default: { key: "val" } }] };
+    const { options } = buildRequest(tc, {});
+    assert.deepEqual(JSON.parse(options.body).filter, { key: "val" });
+  });
+
   it("treats params: null same as no params", () => {
     const tc = { method: "POST", url: "http://localhost/api", params: null };
     const { options } = buildRequest(tc, {});
