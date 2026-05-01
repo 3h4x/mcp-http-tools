@@ -983,6 +983,39 @@ describe("validateConfig", () => {
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes("response.path"));
   });
+
+  it("reports error when tool name starts with a digit", () => {
+    const config = { tools: [{ name: "1tool", url: "http://localhost" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tool name"));
+  });
+
+  it("reports error when tool name contains invalid characters", () => {
+    const config = { tools: [{ name: "my tool!", url: "http://localhost" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("tool name"));
+  });
+
+  it("accepts tool names with hyphens and underscores", () => {
+    const config = { tools: [{ name: "my-tool_v2", url: "http://localhost" }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports error when response.path is set but response.type is not json", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "text", path: "data.value" } }] };
+    const errors = validateConfig(config);
+    assert.ok(errors.length >= 1);
+    assert.ok(errors.some(e => e.includes("response.path") && e.includes("json")));
+  });
+
+  it("reports error when response.path is set with no response.type (defaults to text)", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { path: "data.value" } }] };
+    const errors = validateConfig(config);
+    assert.ok(errors.length >= 1);
+    assert.ok(errors.some(e => e.includes("response.path") && e.includes("json")));
+  });
 });
 
 // ── buildRequest POST ─────────────────────────────────────────────────────
