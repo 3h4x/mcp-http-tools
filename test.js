@@ -653,6 +653,13 @@ describe("validateConfig", () => {
     assert.ok(errors[0].includes("response.type"));
   });
 
+  it("reports empty-string response.type", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('response.type'));
+  });
+
   it("accepts valid response types", () => {
     for (const type of ["text", "json"]) {
       const config = { tools: [{ name: "t", url: "http://localhost", response: { type } }] };
@@ -779,6 +786,14 @@ describe("validateConfig", () => {
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes('"str"'));
     assert.ok(errors[0].includes("params[0]"));
+  });
+
+  it("reports empty-string param type", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", type: "" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('params[0]'));
+    assert.ok(errors[0].includes('invalid type'));
   });
 
   it("accepts all valid param types", () => {

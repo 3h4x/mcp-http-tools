@@ -122,7 +122,7 @@ export function validateConfig(config) {
       if (param.required === true && param.default !== undefined) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} cannot have both "required: true" and a "default"`);
       }
-      if (param.type && !VALID_PARAM_TYPES.has(param.type)) {
+      if (param.type !== undefined && !VALID_PARAM_TYPES.has(param.type)) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
       }
     }
@@ -137,7 +137,7 @@ export function validateConfig(config) {
         }
       }
     }
-    if (tool.response?.type && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
+    if (tool.response?.type !== undefined && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
       errors.push(`${ref}: invalid response.type "${tool.response.type}" — expected "text" or "json"`);
     }
     if (tool.response?.path !== undefined && (typeof tool.response.path !== "string" || tool.response.path.trim() === "")) {
