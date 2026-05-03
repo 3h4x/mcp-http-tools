@@ -77,22 +77,29 @@ export function validateConfig(config) {
     if (!tool.url) {
       errors.push(`${ref}: missing required field "url"`);
     } else {
-      if (!tool.url.includes("${")) {
+      if (typeof tool.url !== "string") {
+        errors.push(`${ref}: "url" must be a string`);
+      } else if (!tool.url.includes("${")) {
         try {
           new URL(tool.url.replace(/\{[^}]+\}/g, "x"));
         } catch {
           errors.push(`${ref}: "url" is not a valid URL`);
         }
       }
-      const paramNames = new Set((Array.isArray(tool.params) ? tool.params : []).map(p => p?.name).filter(Boolean));
-      for (const [, ph] of tool.url.matchAll(/(?<!\$)\{(\w+)\}/g)) {
-        if (!paramNames.has(ph)) {
-          errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
+      if (typeof tool.url === "string") {
+        const paramNames = new Set((Array.isArray(tool.params) ? tool.params : []).map(p => p?.name).filter(Boolean));
+        for (const [, ph] of tool.url.matchAll(/(?<!\$)\{(\w+)\}/g)) {
+          if (!paramNames.has(ph)) {
+            errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
+          }
         }
       }
     }
-    if (tool.method && !VALID_METHODS.has(tool.method.toUpperCase())) {
-      errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
+    if (tool.method !== undefined) {
+      const method = typeof tool.method === "string" ? tool.method.toUpperCase() : "";
+      if (!VALID_METHODS.has(method)) {
+        errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
+      }
     }
     if (tool.params != null && !Array.isArray(tool.params)) {
       errors.push(`${ref}: "params" must be an array`);

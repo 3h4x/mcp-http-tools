@@ -607,6 +607,14 @@ describe("validateConfig", () => {
     assert.ok(errors[0].includes('"t"'));
   });
 
+  it("reports non-string method without throwing", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", method: 123 }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("method"));
+    assert.ok(errors[0].includes("123"));
+  });
+
   it("reports multiple errors across multiple tools", () => {
     const config = {
       tools: [
@@ -720,6 +728,14 @@ describe("validateConfig", () => {
     const errors = validateConfig(config);
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes('"url"'));
+  });
+
+  it("reports non-string url without throwing", () => {
+    const config = { tools: [{ name: "t", url: 42 }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"url"'));
+    assert.ok(errors[0].includes("string"));
   });
 
   it("accepts URL with path param placeholders", () => {
