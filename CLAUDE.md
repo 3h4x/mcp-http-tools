@@ -32,6 +32,7 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 
 - GET params → query string, POST params → JSON body
 - `{param}` in URL → path substitution (excluded from query/body)
+- `{+path}` in URL → raw path substitution that preserves `/` separators
 - `${ENV_VAR}` in headers → env var substitution
 - `response.type: json` + `response.path` → dot-path JSON extraction
 - `default` on params → used when LLM omits the param
@@ -61,6 +62,8 @@ node index.js    # start MCP server (stdio)
 2. Keep imports grouped and explicit: Node built-ins first using the `node:` prefix, then third-party packages, then local relative imports with the `.js` extension required by ESM.
 3. Follow existing naming patterns: exported helpers in `lib.js` use camelCase verbs (`loadConfig`, `buildRequest`), internal constants use `UPPER_SNAKE_CASE`, and tool/config field names stay aligned with YAML keys (`response.path`, `timeout`, `params`).
 4. Prefer small, synchronous startup helpers for config loading/validation. Do not introduce classes, dependency injection layers, or extra abstraction around the current functional module layout.
+5. Preserve the surrounding style of each file you touch. Avoid quote/spacing churn and do not mix in formatting-only rewrites, especially when the worktree already has unrelated edits.
+6. Keep exports minimal. Prefer internal helpers inside `lib.js` unless the function is part of the public module surface used by `index.js` or covered directly in `test.js`.
 
 ## Testing Rules
 
@@ -74,6 +77,7 @@ node index.js    # start MCP server (stdio)
 8. Mirror the existing structure in `test.js`: one `describe()` block per exported function, with edge cases added close to the related happy-path tests.
 9. For filesystem behavior such as `loadConfig()`, use temporary directories/files created inside the test and clean them up in the test lifecycle; do not rely on any real user config path.
 10. When validating serialized requests, assert the full URL/body/header shape that `buildRequest()` or `callTool()` produces rather than only checking one field.
+11. If a behavior change affects documented config fields or examples, update `README.md` and `config.yaml` in the same change so the docs stay aligned with `lib.js`.
 
 ## Dependency Security
 
@@ -89,6 +93,8 @@ node index.js    # start MCP server (stdio)
 2. Keep `index.js` focused on MCP wiring only: load config, validate once at startup, expose tool schemas, dispatch `callTool()`. Do not move business rules or request-shaping logic into the server entrypoint.
 3. Preserve the startup flow documented above: `loadConfig()` chooses one config source, `validateConfig()` reports data errors before boot, and runtime request failures are handled inside `callTool()`.
 4. Preserve config-driven behavior over hardcoded presets. New features should be expressed as YAML config fields interpreted by `lib.js`, not as repo-specific API logic.
+5. Prefer adding small helpers within `lib.js` over creating new source files. Split modules only when there is clear reuse pressure or explicit approval.
+6. Keep example behavior deterministic and order-preserving: `configToTools()` should continue reflecting tool order from the YAML config, and startup should not merge or mutate tool definitions implicitly.
 
 ## Safety Rules
 
@@ -97,6 +103,8 @@ node index.js    # start MCP server (stdio)
 3. Do not bypass `pnpm-lock.yaml` or run `pnpm install --no-lockfile`.
 4. Commit style: conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`). Match the existing log format.
 5. The `main` branch is the only branch — no feature branches are used in this project. Commit directly to `main` after tests pass.
+6. Never use the real home-directory config for debugging or tests. Work against the committed `config.yaml` example or explicit temporary paths passed into helpers.
+7. Do not rewrite unrelated dirty files or bundle opportunistic cleanup into the same change unless the task explicitly requires it.
 
 ## Next steps
 
