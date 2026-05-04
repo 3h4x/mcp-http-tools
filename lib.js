@@ -48,6 +48,7 @@ const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
+const INVALID_RAW_PATH_SEGMENTS = new Set(["", ".", ".."]);
 
 export function validateConfig(config) {
   const errors = [];
@@ -87,10 +88,20 @@ export function validateConfig(config) {
         }
       }
       if (typeof tool.url === "string") {
-        const paramNames = new Set((Array.isArray(tool.params) ? tool.params : []).map(p => p?.name).filter(Boolean));
-        for (const [, ph] of tool.url.matchAll(/(?<!\$)\{(\w+)\}/g)) {
-          if (!paramNames.has(ph)) {
+        const paramsByName = new Map((Array.isArray(tool.params) ? tool.params : []).map(p => [p?.name, p]));
+        const paramNames = new Set(paramsByName.keys());
+        for (const [, ph] of tool.url.matchAll(/(?<!\$)\{(\+?\w+)\}/g)) {
+          const paramName = ph.startsWith("+") ? ph.slice(1) : ph;
+          if (!paramNames.has(paramName)) {
             errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
+            continue;
+          }
+          if (ph.startsWith("+")) {
+            const param = paramsByName.get(paramName);
+            const hasSafeDefault = param?.default !== undefined && isSafeRawPathValue(param.default);
+            if (param?.required !== true && !hasSafeDefault) {
+              errors.push(`${ref}: raw path placeholder "{${ph}}" requires params["${paramName}"] to be required or have a non-empty default without "." or ".." segments`);
+            }
           }
         }
       }
@@ -185,6 +196,7 @@ export function buildRequest(toolConfig, args) {
   if (!toolConfig.url) throw new Error('tool config is missing required "url" field');
   const method = (toolConfig.method ?? "GET").toUpperCase();
   const headers = {};
+  const paramsByName = new Map((toolConfig.params ?? []).map(p => [p.name, p]));
 
   if (toolConfig.headers) {
     for (const [k, v] of Object.entries(toolConfig.headers)) {
@@ -193,9 +205,13 @@ export function buildRequest(toolConfig, args) {
   }
 
   const usedInUrl = new Set();
-  const resolvedUrl = substituteEnvVars(toolConfig.url).replace(/\{(\w+)\}/g, (_, name) => {
+  const resolvedUrl = substituteEnvVars(toolConfig.url).replace(/\{(\+?)(\w+)\}/g, (_, raw, name) => {
     usedInUrl.add(name);
-    return encodeURIComponent(String(args[name] ?? ""));
+    const param = paramsByName.get(name);
+    const value = (name in args && args[name] !== undefined)
+      ? args[name]
+      : (param?.default !== undefined ? param.default : "");
+    return raw === "+" ? encodeRawPathParam(name, value) : encodeURIComponent(value);
   });
 
   const bodyMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -240,6 +256,22 @@ export function buildRequest(toolConfig, args) {
 
 function toQueryString(val) {
   return (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val);
+}
+
+function encodeRawPathParam(name, value) {
+  const normalizedValue = String(value);
+  const segments = normalizedValue.split("/");
+  for (const segment of segments) {
+    if (INVALID_RAW_PATH_SEGMENTS.has(segment)) {
+      throw new Error(`Invalid raw path param "${name}": segments must not be empty, "." or ".."`);
+    }
+  }
+  return segments.map(encodeURIComponent).join("/");
+}
+
+function isSafeRawPathValue(value) {
+  const segments = String(value).split("/");
+  return segments.every(segment => !INVALID_RAW_PATH_SEGMENTS.has(segment));
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;

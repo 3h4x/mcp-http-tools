@@ -48,7 +48,7 @@ Each tool supports:
 |-------|----------|---------|-------------|
 | `name` | yes | | MCP tool name |
 | `description` | no | `""` | Shown to the LLM |
-| `url` | yes | | Target HTTP endpoint. Supports `{param}` placeholders |
+| `url` | yes | | Target HTTP endpoint. Supports `{param}` placeholders and `{+path}` raw path placeholders |
 | `method` | no | `GET` | HTTP method (`GET` or `POST`) |
 | `headers` | no | | Static headers. Supports `${ENV_VAR}` substitution |
 | `params` | no | `[]` | Tool input parameters (see below) |
@@ -70,6 +70,11 @@ Each tool supports:
 - **GET**: params become URL query parameters
 - **POST**: params become keys in a JSON body
 - **URL placeholders**: `{param}` in the URL consumes the param value (not sent as query param or body key)
+- **Raw path placeholders**: `{+path}` preserves `/` separators while still encoding each path segment
+- **Raw path safety**: `{+path}` rejects empty segments and `.` / `..` segments so callers cannot escape the configured URL prefix
+- **Raw path config contract**: params used by `{+path}` must be `required: true` or have a safe non-empty `default`
+
+See [docs/raw-path-placeholders.md](docs/raw-path-placeholders.md) for the exact `{+path}` contract.
 
 ## Examples
 

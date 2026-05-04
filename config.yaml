@@ -2,6 +2,9 @@
 # Copy to ~/.config/mcp-http-tools/config.yaml to override.
 #
 # Each tool maps to one HTTP request. Define as many as you need.
+# Raw path placeholders like {+path} preserve "/" separators, but each
+# segment must be non-empty and cannot be "." or "..". Params used by
+# {+path} must be required or provide a safe non-empty default.
 
 tools: []
 
@@ -56,6 +59,17 @@ tools: []
 #   - name: ping_api
 #     description: Check if the API is up
 #     url: http://localhost:3000/health
+#     response:
+#       type: text
+#
+#   # Raw path placeholder for slash-separated keys
+#   - name: get_job_file
+#     description: Fetch a nested job asset by path
+#     url: http://localhost:3000/jobs/{+path}
+#     params:
+#       - name: path
+#         description: Slash-separated job path; segments cannot be empty, "." or ".."
+#         required: true
 #     response:
 #       type: text
 #

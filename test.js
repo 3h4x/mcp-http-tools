@@ -235,6 +235,31 @@ describe("configToTools", () => {
     assert.equal(tool.inputSchema.properties.limit.default, 50);
   });
 
+  it("keeps required raw path params required in the generated schema", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost/api/{+path}",
+        params: [{ name: "path", required: true }],
+      }],
+    };
+    const [tool] = configToTools(config);
+    assert.deepEqual(tool.inputSchema.required, ["path"]);
+  });
+
+  it("allows optional raw path params in the generated schema when a safe default exists", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost/api/{+path}",
+        params: [{ name: "path", default: "jobs/default" }],
+      }],
+    };
+    const [tool] = configToTools(config);
+    assert.equal(tool.inputSchema.required, undefined);
+    assert.equal(tool.inputSchema.properties.path.default, "jobs/default");
+  });
+
   it("includes enum in property schema when provided", () => {
     const config = {
       tools: [{
@@ -363,6 +388,84 @@ describe("buildRequest GET", () => {
     };
     const { url } = buildRequest(tc, { name: "hello world/foo" });
     assert.ok(url.includes("hello%20world%2Ffoo"));
+  });
+
+  it("applies defaults for standard URL path placeholders", () => {
+    const tc = {
+      url: "http://localhost/items/{id}",
+      params: [{ name: "id", default: "42" }],
+    };
+    const { url } = buildRequest(tc, {});
+    assert.equal(url, "http://localhost/items/42");
+  });
+
+  it("preserves slash separators for {+param} path placeholders", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    const { url } = buildRequest(tc, { path: "jobs/notifications with space" });
+    assert.equal(url, "http://localhost/api/jobs/notifications%20with%20space");
+  });
+
+  it("applies safe defaults for raw path placeholders", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: "jobs/default" }],
+    };
+    const { url } = buildRequest(tc, {});
+    assert.equal(url, "http://localhost/api/jobs/default");
+  });
+
+  it("coerces non-string raw path args before encoding", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true, type: "number" }],
+    };
+    const { url } = buildRequest(tc, { path: 42 });
+    assert.equal(url, "http://localhost/api/42");
+  });
+
+  it("coerces non-string raw path defaults before encoding", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: 42, type: "number" }],
+    };
+    const { url } = buildRequest(tc, {});
+    assert.equal(url, "http://localhost/api/42");
+  });
+
+  it("rejects raw path placeholders with leading dot-dot segments", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    assert.throws(
+      () => buildRequest(tc, { path: "../admin" }),
+      /Invalid raw path param "path"/
+    );
+  });
+
+  it("rejects raw path placeholders with nested dot-dot segments", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    assert.throws(
+      () => buildRequest(tc, { path: "a/../../admin" }),
+      /Invalid raw path param "path"/
+    );
+  });
+
+  it("rejects raw path placeholders with empty segments", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    assert.throws(
+      () => buildRequest(tc, { path: "a//admin" }),
+      /Invalid raw path param "path"/
+    );
   });
 
   it("works with no params", () => {
@@ -750,6 +853,66 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("accepts raw path URL placeholders", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{+path}", params: [{ name: "path", required: true }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("rejects optional raw path URL placeholders without a default", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{+path}", params: [{ name: "path" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /raw path placeholder "\{\+path\}" requires params\["path"\] to be required or have a non-empty default/i);
+  });
+
+  it("accepts optional raw path URL placeholders with a safe non-empty default", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost/api/{+path}",
+        params: [{ name: "path", default: "jobs/default" }],
+      }],
+    };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("accepts optional raw path URL placeholders with a safe non-string default", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost/api/{+path}",
+        params: [{ name: "path", default: 42, type: "number" }],
+      }],
+    };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("rejects optional raw path URL placeholders with an empty default", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost/api/{+path}",
+        params: [{ name: "path", default: "" }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /raw path placeholder "\{\+path\}" requires params\["path"\] to be required or have a non-empty default/i);
+  });
+
+  it("rejects optional raw path URL placeholders with dot-dot default segments", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost/api/{+path}",
+        params: [{ name: "path", default: "../admin" }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /raw path placeholder "\{\+path\}" requires params\["path"\] to be required or have a non-empty default/i);
+  });
+
   it("reports URL placeholder without matching param definition", () => {
     const config = { tools: [{ name: "t", url: "http://localhost/api/{id}", params: [{ name: "query" }] }] };
     const errors = validateConfig(config);
@@ -1105,6 +1268,21 @@ describe("buildRequest POST", () => {
     const body = JSON.parse(options.body);
     assert.equal(body.id, undefined);
     assert.equal(body.data, "payload");
+  });
+
+  it("rejects invalid raw path placeholders before building POST requests", () => {
+    const tc = {
+      method: "POST",
+      url: "http://localhost/api/{+path}",
+      params: [
+        { name: "path", required: true },
+        { name: "status", required: true },
+      ],
+    };
+    assert.throws(
+      () => buildRequest(tc, { path: "../admin", status: "active" }),
+      /Invalid raw path param "path"/
+    );
   });
 
   it("sends empty body when no params match", () => {
@@ -1575,6 +1753,74 @@ describe("integration", () => {
     assert.equal(text, "42");
   });
 
+  it("callTool: invalid raw GET path returns isError before fetch", async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    const { text, isError } = await callTool(toolConfig, { path: "../admin" });
+    assert.equal(isError, true);
+    assert.ok(text.includes('Invalid raw path param "path"'));
+    assert.equal(fetchCalled, false, "fetch must not run for invalid raw paths");
+  });
+
+  it("callTool: omitted raw GET path uses safe default", async () => {
+    let capturedUrl;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: "jobs/default" }],
+    };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedUrl, "http://localhost/api/jobs/default");
+  });
+
+  it("callTool: coerces non-string raw GET path args before fetch", async () => {
+    let capturedUrl;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true, type: "number" }],
+    };
+    const { text, isError } = await callTool(toolConfig, { path: 42 });
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedUrl, "http://localhost/api/42");
+  });
+
+  it("callTool: coerces non-string raw GET path defaults before fetch", async () => {
+    let capturedUrl;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: 42, type: "number" }],
+    };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedUrl, "http://localhost/api/42");
+  });
+
   it("callTool: times out after configured timeout", async () => {
     globalThis.fetch = (_url, options) => new Promise((resolve, reject) => {
       const timer = setTimeout(() => resolve({ ok: true, status: 200, text: async () => "late" }), 200);
@@ -1717,6 +1963,75 @@ describe("integration", () => {
     assert.equal(capturedBody.status, "active");
     assert.equal(capturedBody.priority, "normal");
     assert.equal(capturedBody.id, undefined, "path param must not appear in body");
+  });
+
+  it("callTool: invalid raw POST path returns isError before fetch", async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      method: "POST",
+      url: "http://localhost/api/{+path}",
+      params: [
+        { name: "path", required: true },
+        { name: "status", required: true },
+      ],
+    };
+    const { text, isError } = await callTool(toolConfig, { path: "a/../../admin", status: "active" });
+    assert.equal(isError, true);
+    assert.ok(text.includes('Invalid raw path param "path"'));
+    assert.equal(fetchCalled, false, "fetch must not run for invalid raw paths");
+  });
+
+  it("callTool: omitted raw POST path uses safe default", async () => {
+    let capturedUrl;
+    let capturedBody;
+    globalThis.fetch = async (url, options) => {
+      capturedUrl = url;
+      capturedBody = JSON.parse(options.body);
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      method: "POST",
+      url: "http://localhost/api/{+path}",
+      params: [
+        { name: "path", default: "jobs/default" },
+        { name: "status", required: true },
+      ],
+    };
+    const { text, isError } = await callTool(toolConfig, { status: "active" });
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedUrl, "http://localhost/api/jobs/default");
+    assert.deepEqual(capturedBody, { status: "active" });
+  });
+
+  it("callTool: coerces non-string raw POST path defaults before fetch", async () => {
+    let capturedUrl;
+    let capturedBody;
+    globalThis.fetch = async (url, options) => {
+      capturedUrl = url;
+      capturedBody = JSON.parse(options.body);
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      method: "POST",
+      url: "http://localhost/api/{+path}",
+      params: [
+        { name: "path", default: 42, type: "number" },
+        { name: "status", required: true },
+      ],
+    };
+    const { text, isError } = await callTool(toolConfig, { status: "active" });
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedUrl, "http://localhost/api/42");
+    assert.deepEqual(capturedBody, { status: "active" });
   });
 
   it("callTool: POST non-2xx marks isError", async () => {
