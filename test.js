@@ -1120,6 +1120,22 @@ describe("validateConfig", () => {
     assert.ok(errors[0].includes("required") && errors[0].includes("default"));
   });
 
+  it("reports error when unnamed param has both required:true and a default", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ required: true, default: "foo" }] }] };
+    const errors = validateConfig(config);
+    const err = errors.find(e => e.includes("required") && e.includes("default"));
+    assert.ok(err, "expected a required+default error");
+    assert.ok(err.includes("params[0]") && !err.includes('params[0] ("'), "param name should not appear in error when unnamed");
+  });
+
+  it("reports error when unnamed param has an invalid type", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ type: "str" }] }] };
+    const errors = validateConfig(config);
+    const err = errors.find(e => e.includes("invalid type"));
+    assert.ok(err, "expected an invalid type error");
+    assert.ok(err.includes("params[0]") && !err.includes('params[0] ("'), "param name should not appear in error when unnamed");
+  });
+
   it("does not report error when param has required:false and a default", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", required: false, default: "foo" }] }] };
     assert.deepEqual(validateConfig(config), []);
