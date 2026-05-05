@@ -435,6 +435,17 @@ describe("buildRequest GET", () => {
     assert.equal(url, "http://localhost/api/42");
   });
 
+  it("throws descriptive error when required raw path param is not provided", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    assert.throws(
+      () => buildRequest(tc, {}),
+      /Required raw path parameter "path" was not provided/
+    );
+  });
+
   it("rejects raw path placeholders with leading dot-dot segments", () => {
     const tc = {
       url: "http://localhost/api/{+path}",
@@ -1902,6 +1913,14 @@ describe("integration", () => {
     assert.equal(isError, true);
     assert.ok(typeof text === "string" && text.length > 0);
     assert.ok(text.toLowerCase().includes("url"), `expected url-related error, got: ${text}`);
+  });
+
+  it("callTool: missing required raw path param returns isError instead of throwing", async () => {
+    const toolConfig = { name: "t", url: "http://localhost/api/{+path}", params: [{ name: "path", required: true }] };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.ok(text.includes("Required raw path parameter"));
+    assert.ok(text.includes("path"));
   });
 
   it("callTool: non-Error thrown value uses String(err) fallback", async () => {

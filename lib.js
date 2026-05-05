@@ -208,10 +208,22 @@ export function buildRequest(toolConfig, args) {
   const resolvedUrl = substituteEnvVars(toolConfig.url).replace(/\{(\+?)(\w+)\}/g, (_, raw, name) => {
     usedInUrl.add(name);
     const param = paramsByName.get(name);
-    const value = (name in args && args[name] !== undefined)
-      ? args[name]
-      : (param?.default !== undefined ? param.default : "");
-    return raw === "+" ? encodeRawPathParam(name, value) : encodeURIComponent(value);
+    let value;
+    if (name in args && args[name] !== undefined) {
+      value = args[name];
+    } else if (param?.default !== undefined) {
+      value = param.default;
+    } else {
+      value = "";
+    }
+
+    if (raw === "+") {
+      if (value === "" && param?.required === true) {
+        throw new Error(`Required raw path parameter "${name}" was not provided`);
+      }
+      return encodeRawPathParam(name, value);
+    }
+    return encodeURIComponent(value);
   });
 
   const bodyMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
