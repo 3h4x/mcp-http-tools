@@ -479,6 +479,17 @@ describe("buildRequest GET", () => {
     );
   });
 
+  it("rejects raw path placeholders with single dot segments", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    assert.throws(
+      () => buildRequest(tc, { path: "a/./admin" }),
+      /Invalid raw path param "path"/
+    );
+  });
+
   it("works with no params", () => {
     const tc = { url: "http://localhost/health" };
     const { url, options } = buildRequest(tc, {});
@@ -929,6 +940,13 @@ describe("validateConfig", () => {
     const errors = validateConfig(config);
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes("{id}"), `expected error about {id}, got: ${errors[0]}`);
+  });
+
+  it("reports raw URL placeholder without matching param definition", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{+path}", params: [{ name: "query" }] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("{+path}"), `expected error about {+path}, got: ${errors[0]}`);
   });
 
   it("reports URL placeholder when no params defined at all", () => {
