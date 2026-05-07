@@ -490,6 +490,26 @@ describe("buildRequest GET", () => {
     );
   });
 
+  it("rejects optional raw path param with safe default when user provides invalid override", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: "jobs/default" }],
+    };
+    assert.throws(
+      () => buildRequest(tc, { path: "../admin" }),
+      /Invalid raw path param "path"/
+    );
+  });
+
+  it("allows optional raw path param with safe default when user provides valid override", () => {
+    const tc = {
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: "jobs/default" }],
+    };
+    const { url } = buildRequest(tc, { path: "jobs/custom" });
+    assert.equal(url, "http://localhost/api/jobs/custom");
+  });
+
   it("works with no params", () => {
     const tc = { url: "http://localhost/health" };
     const { url, options } = buildRequest(tc, {});
@@ -928,6 +948,19 @@ describe("validateConfig", () => {
         name: "t",
         url: "http://localhost/api/{+path}",
         params: [{ name: "path", default: "../admin" }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /raw path placeholder "\{\+path\}" requires params\["path"\] to be required or have a non-empty default/i);
+  });
+
+  it("rejects optional raw path URL placeholders with single-dot default segments", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost/api/{+path}",
+        params: [{ name: "path", default: "./admin" }],
       }],
     };
     const errors = validateConfig(config);
@@ -1866,6 +1899,37 @@ describe("integration", () => {
     assert.equal(capturedUrl, "http://localhost/api/42");
   });
 
+  it("callTool: rejects optional raw GET path with invalid override", async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => { fetchCalled = true; };
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: "jobs/default" }],
+    };
+    const { text, isError } = await callTool(toolConfig, { path: "../admin" });
+    assert.equal(isError, true);
+    assert.ok(text.includes('Invalid raw path param "path"'));
+    assert.equal(fetchCalled, false, "fetch must not run for invalid raw path overrides");
+  });
+
+  it("callTool: allows optional raw GET path with valid override", async () => {
+    let capturedUrl;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api/{+path}",
+      params: [{ name: "path", default: "jobs/default" }],
+    };
+    const { text, isError } = await callTool(toolConfig, { path: "jobs/custom" });
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedUrl, "http://localhost/api/jobs/custom");
+  });
+
   it("callTool: times out after configured timeout", async () => {
     globalThis.fetch = (_url, options) => new Promise((resolve, reject) => {
       const timer = setTimeout(() => resolve({ ok: true, status: 200, text: async () => "late" }), 200);
@@ -2084,6 +2148,48 @@ describe("integration", () => {
     assert.equal(isError, undefined);
     assert.equal(text, "ok");
     assert.equal(capturedUrl, "http://localhost/api/42");
+    assert.deepEqual(capturedBody, { status: "active" });
+  });
+
+  it("callTool: rejects optional raw POST path with invalid override", async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => { fetchCalled = true; };
+    const toolConfig = {
+      name: "t",
+      method: "POST",
+      url: "http://localhost/api/{+path}",
+      params: [
+        { name: "path", default: "jobs/default" },
+        { name: "status", required: true },
+      ],
+    };
+    const { text, isError } = await callTool(toolConfig, { path: "../../admin", status: "active" });
+    assert.equal(isError, true);
+    assert.ok(text.includes('Invalid raw path param "path"'));
+    assert.equal(fetchCalled, false, "fetch must not run for invalid raw path overrides");
+  });
+
+  it("callTool: allows optional raw POST path with valid override", async () => {
+    let capturedUrl;
+    let capturedBody;
+    globalThis.fetch = async (url, options) => {
+      capturedUrl = url;
+      capturedBody = JSON.parse(options.body);
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const toolConfig = {
+      name: "t",
+      method: "POST",
+      url: "http://localhost/api/{+path}",
+      params: [
+        { name: "path", default: "jobs/default" },
+        { name: "status", required: true },
+      ],
+    };
+    const { text, isError } = await callTool(toolConfig, { path: "jobs/custom", status: "active" });
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedUrl, "http://localhost/api/jobs/custom");
     assert.deepEqual(capturedBody, { status: "active" });
   });
 
