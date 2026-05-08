@@ -33,6 +33,7 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 - GET params → query string, POST params → JSON body
 - `{param}` in URL → path substitution (excluded from query/body)
 - `{+path}` in URL → raw path substitution that preserves `/` separators
+- `{+path}` safety → reject empty segments and `.` / `..`; params used by `{+path}` must be `required: true` or have a safe non-empty `default`
 - `${ENV_VAR}` in headers → env var substitution
 - `response.type: json` + `response.path` → dot-path JSON extraction
 - `default` on params → used when LLM omits the param
@@ -41,6 +42,7 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 
 ```bash
 pnpm test        # ~190+ tests (count grows; run to verify)
+pnpm install     # install deps using the committed pnpm lockfile
 node index.js    # start MCP server (stdio)
 ```
 
@@ -86,6 +88,7 @@ node index.js    # start MCP server (stdio)
 3. Before adding any package, check it on the npm registry: download count, publish date, maintainer history. Verify the package name is not a typosquat.
 4. Run `pnpm audit` after any dependency change and resolve critical/high findings before committing.
 5. Never add packages with `postinstall` or `prepare` scripts without reviewing exactly what they execute.
+6. Prefer `pnpm` for install/update commands in both docs and local runs. Do not switch project instructions to `npm` while `packageManager` is pinned to `pnpm@10.33.0` and the repo lockfile is `pnpm-lock.yaml`.
 
 ## Architecture Patterns
 
@@ -95,6 +98,7 @@ node index.js    # start MCP server (stdio)
 4. Preserve config-driven behavior over hardcoded presets. New features should be expressed as YAML config fields interpreted by `lib.js`, not as repo-specific API logic.
 5. Prefer adding small helpers within `lib.js` over creating new source files. Split modules only when there is clear reuse pressure or explicit approval.
 6. Keep example behavior deterministic and order-preserving: `configToTools()` should continue reflecting tool order from the YAML config, and startup should not merge or mutate tool definitions implicitly.
+7. Treat raw path placeholder validation as part of the core request-building contract. Changes to `{+path}` behavior must keep validation in `lib.js`, add regression tests in `test.js`, and update `README.md`, `config.yaml`, and `docs/raw-path-placeholders.md` together.
 
 ## Safety Rules
 
