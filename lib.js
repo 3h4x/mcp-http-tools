@@ -49,6 +49,8 @@ const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 const INVALID_RAW_PATH_SEGMENTS = new Set(["", ".", ".."]);
+const URL_PLACEHOLDER_RE = /(?<!\$)\{(\+?[\w-]+)\}/g;
+const URL_PLACEHOLDER_SUB_RE = /\{(\+?)([\w-]+)\}/g;
 
 export function validateConfig(config) {
   const errors = [];
@@ -90,7 +92,7 @@ export function validateConfig(config) {
       if (typeof tool.url === "string") {
         const paramsByName = new Map((Array.isArray(tool.params) ? tool.params : []).map(p => [p?.name, p]));
         const paramNames = new Set(paramsByName.keys());
-        for (const [, ph] of tool.url.matchAll(/(?<!\$)\{(\+?\w+)\}/g)) {
+        for (const [, ph] of tool.url.matchAll(URL_PLACEHOLDER_RE)) {
           const paramName = ph.startsWith("+") ? ph.slice(1) : ph;
           if (!paramNames.has(paramName)) {
             errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
@@ -205,7 +207,7 @@ export function buildRequest(toolConfig, args) {
   }
 
   const usedInUrl = new Set();
-  const resolvedUrl = substituteEnvVars(toolConfig.url).replace(/\{(\+?)(\w+)\}/g, (_, raw, name) => {
+  const resolvedUrl = substituteEnvVars(toolConfig.url).replace(URL_PLACEHOLDER_SUB_RE, (_, raw, name) => {
     usedInUrl.add(name);
     const param = paramsByName.get(name);
     let value;

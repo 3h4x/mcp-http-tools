@@ -73,6 +73,20 @@ tools: []
 #     response:
 #       type: text
 #
+#   # Hyphenated placeholder names are supported
+#   - name: get_user_report
+#     description: Fetch a report for a user id
+#     url: http://localhost:3000/users/{user-id}/reports/{+file-path}
+#     params:
+#       - name: user-id
+#         description: User identifier
+#         required: true
+#       - name: file-path
+#         description: Slash-separated report path
+#         required: true
+#     response:
+#       type: text
+#
 #   # Auth via env var in headers
 #   - name: list_alerts
 #     description: List active alerts

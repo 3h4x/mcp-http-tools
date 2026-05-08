@@ -2,6 +2,8 @@
 
 `{+param}` preserves `/` separators inside a path value while still percent-encoding each segment.
 
+The placeholder name is matched against the param `name`, including hyphenated names such as `{+file-path}`.
+
 Accepted example:
 
 - `path: jobs/notifications with space`

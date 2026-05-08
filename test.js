@@ -390,6 +390,15 @@ describe("buildRequest GET", () => {
     assert.ok(url.includes("hello%20world%2Ffoo"));
   });
 
+  it("substitutes standard URL placeholders with hyphenated param names", () => {
+    const tc = {
+      url: "http://localhost/api/users/{user-id}",
+      params: [{ name: "user-id", required: true }],
+    };
+    const { url } = buildRequest(tc, { "user-id": "abc 123" });
+    assert.equal(url, "http://localhost/api/users/abc%20123");
+  });
+
   it("applies defaults for standard URL path placeholders", () => {
     const tc = {
       url: "http://localhost/items/{id}",
@@ -406,6 +415,15 @@ describe("buildRequest GET", () => {
     };
     const { url } = buildRequest(tc, { path: "jobs/notifications with space" });
     assert.equal(url, "http://localhost/api/jobs/notifications%20with%20space");
+  });
+
+  it("preserves slash separators for raw path placeholders with hyphenated param names", () => {
+    const tc = {
+      url: "http://localhost/files/{+file-path}",
+      params: [{ name: "file-path", required: true }],
+    };
+    const { url } = buildRequest(tc, { "file-path": "dir/subdir/file name.txt" });
+    assert.equal(url, "http://localhost/files/dir/subdir/file%20name.txt");
   });
 
   it("applies safe defaults for raw path placeholders", () => {
@@ -895,8 +913,18 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("accepts URL placeholders with hyphenated param names", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{user-id}/data", params: [{ name: "user-id" }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
   it("accepts raw path URL placeholders", () => {
     const config = { tools: [{ name: "t", url: "http://localhost/api/{+path}", params: [{ name: "path", required: true }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("accepts raw path URL placeholders with hyphenated param names", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost/api/{+file-path}", params: [{ name: "file-path", required: true }] }] };
     assert.deepEqual(validateConfig(config), []);
   });
 
