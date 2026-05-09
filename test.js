@@ -1,9 +1,12 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool } from "./lib.js";
+
+const realFetch = globalThis.fetch;
 
 // ── resolvePath ───────────────────────────────────────────────────────────
 
@@ -1859,6 +1862,39 @@ describe("integration", () => {
     assert.equal(text, "42");
   });
 
+  it("callTool: GET supports hyphenated standard and raw path placeholders with a real local server", async () => {
+    globalThis.fetch = realFetch;
+    const server = createServer((req, res) => {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url, "/users/alice/reports/quarterly/2026%20Q2?status=active");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: { ok: true } }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = {
+        name: "t",
+        url: `http://127.0.0.1:${port}/users/{user-id}/reports/{+file-path}`,
+        params: [
+          { name: "user-id", required: true },
+          { name: "file-path", required: true },
+          { name: "status", default: "active" },
+        ],
+        response: { type: "json", path: "data.ok" },
+      };
+      const { text, isError } = await callTool(toolConfig, {
+        "user-id": "alice",
+        "file-path": "quarterly/2026 Q2",
+      });
+      assert.equal(isError, undefined);
+      assert.equal(text, "true");
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
   it("callTool: invalid raw GET path returns isError before fetch", async () => {
     let fetchCalled = false;
     globalThis.fetch = async () => {
@@ -2108,6 +2144,49 @@ describe("integration", () => {
     assert.equal(capturedBody.status, "active");
     assert.equal(capturedBody.priority, "normal");
     assert.equal(capturedBody.id, undefined, "path param must not appear in body");
+  });
+
+  it("callTool: POST supports hyphenated standard and raw path placeholders with a real local server", async () => {
+    globalThis.fetch = realFetch;
+    const server = createServer(async (req, res) => {
+      assert.equal(req.method, "POST");
+      assert.equal(req.url, "/users/alice/reports/quarterly/2026%20Q2");
+
+      let body = "";
+      for await (const chunk of req) {
+        body += chunk;
+      }
+
+      assert.deepEqual(JSON.parse(body), { status: "active", priority: "normal" });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ result: { status: "created" } }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = {
+        name: "t",
+        method: "POST",
+        url: `http://127.0.0.1:${port}/users/{user-id}/reports/{+file-path}`,
+        params: [
+          { name: "user-id", required: true },
+          { name: "file-path", required: true },
+          { name: "status", required: true },
+          { name: "priority", default: "normal" },
+        ],
+        response: { type: "json", path: "result.status" },
+      };
+      const { text, isError } = await callTool(toolConfig, {
+        "user-id": "alice",
+        "file-path": "quarterly/2026 Q2",
+        status: "active",
+      });
+      assert.equal(isError, undefined);
+      assert.equal(text, "created");
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
   });
 
   it("callTool: invalid raw POST path returns isError before fetch", async () => {

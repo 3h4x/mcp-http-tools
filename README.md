@@ -7,8 +7,6 @@ Define your tools in a YAML file — each one maps to an HTTP request. The MCP s
 ## Quick start
 
 ```bash
-npm install
-# or
 pnpm install
 ```
 
