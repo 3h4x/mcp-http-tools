@@ -151,7 +151,7 @@ If neither exists, the server starts with no tools.
 Via [supergateway](https://www.npmjs.com/package/supergateway) for SSE transport:
 
 ```bash
-npx -y supergateway --stdio "node /path/to/mcp-http-tools/index.js" --port 9191
+pnpm dlx supergateway --stdio "node /path/to/mcp-http-tools/index.js" --port 9191
 ```
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
