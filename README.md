@@ -187,6 +187,10 @@ Add to `.claude/settings.json` or use as a stdio MCP server:
 pnpm test
 ```
 
+## Releasing
+
+`main` is released by GitHub Actions via semantic-release. Set an `NPM_TOKEN` repository secret before relying on the release workflow for npm publishes.
+
 ## Stack
 
 - Node.js ESM
