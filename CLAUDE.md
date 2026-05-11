@@ -41,7 +41,7 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 ## Commands
 
 ```bash
-pnpm test        # ~190+ tests (count grows; run to verify)
+pnpm test        # ~250 tests (count grows; run to verify)
 pnpm install     # install deps using the committed pnpm lockfile
 node index.js    # start MCP server (stdio)
 ```
