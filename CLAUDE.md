@@ -52,6 +52,12 @@ node index.js    # start MCP server (stdio)
 2. `./config.yaml` (example template)
 3. Empty `{}` if neither exists
 
+## Docs Reference
+
+| File | Topic | Load when |
+|------|-------|-----------|
+| `docs/raw-path-placeholders.md` | `{+path}` placeholder semantics, safety rules, and accepted/rejected examples | Read before changing raw path placeholder parsing, validation, request building, or related docs/examples |
+
 ## Coding Conventions
 
 - **Runtime**: Node.js ESM (`"type": "module"`). Never use `require()` or CommonJS.
