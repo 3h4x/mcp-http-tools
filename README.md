@@ -189,7 +189,9 @@ pnpm test
 
 ## Releasing
 
-`main` is released by GitHub Actions via semantic-release. Set an `NPM_TOKEN` repository secret before relying on the release workflow for npm publishes.
+`main` is released by GitHub Actions via semantic-release. Conventional commits on `main` determine the next version, create the GitHub release, and publish the package to npm.
+
+Set an `NPM_TOKEN` repository secret before relying on the release workflow for npm publishes.
 
 ## Stack
 
