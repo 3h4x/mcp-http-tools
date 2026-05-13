@@ -44,6 +44,8 @@ To use a different config file for one run:
 node index.js --config /path/to/config.yaml
 ```
 
+If the explicit config file is missing or invalid YAML, startup fails instead of falling back to an empty tool list.
+
 ## Config reference
 
 Each tool supports:
@@ -152,7 +154,7 @@ Config is loaded from (first found wins):
 
 If neither exists, the server starts with no tools.
 
-Pass `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` to override the search path and load exactly one file.
+Pass `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` to override the search path and load exactly one file. An explicit override is required: if that file is missing or invalid YAML, the server exits with an error.
 
 ## Use with Claude Desktop
 

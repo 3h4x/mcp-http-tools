@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -1743,6 +1744,35 @@ describe("loadConfig", () => {
     );
   });
 
+  it("throws when a --config CLI override file does not exist", () => {
+    assert.throws(
+      () => loadConfig({ argv: ["--config", "/does/not/exist.yaml"] }),
+      /Config file not found: .*does\/not\/exist\.yaml/
+    );
+  });
+
+  it("throws when an explicit configPath file does not exist", () => {
+    assert.throws(
+      () => loadConfig({ configPath: "/does/not/exist.yaml" }),
+      /Config file not found: .*does\/not\/exist\.yaml/
+    );
+  });
+
+  it("throws when a --config CLI override file contains invalid YAML", () => {
+    const dir = join(tmpdir(), `mcp-test-cli-bad-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "bad.yaml");
+    writeFileSync(p, "tools:\n  - name: [invalid yaml\n");
+    try {
+      assert.throws(
+        () => loadConfig({ argv: ["--config", p] }),
+        /Failed to parse config at .*bad\.yaml/
+      );
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
   it("returns empty object for an empty YAML file", () => {
     const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
@@ -1778,6 +1808,37 @@ describe("loadConfig", () => {
     } finally {
       rmSync(dir1, { recursive: true });
       rmSync(dir2, { recursive: true });
+    }
+  });
+});
+
+describe("index.js --config startup", () => {
+  it("exits non-zero when the explicit config file is missing", () => {
+    const result = spawnSync(process.execPath, ["index.js", "--config", "/does/not/exist.yaml"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /\[mcp-http-tools\] Config file not found: .*does\/not\/exist\.yaml/);
+  });
+
+  it("exits non-zero when the explicit config file contains invalid YAML", () => {
+    const dir = join(tmpdir(), `mcp-test-cli-startup-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "bad.yaml");
+    writeFileSync(p, "tools:\n  - name: [invalid yaml\n");
+
+    try {
+      const result = spawnSync(process.execPath, ["index.js", "--config", p], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /\[mcp-http-tools\] Failed to parse config at .*bad\.yaml/);
+    } finally {
+      rmSync(dir, { recursive: true });
     }
   });
 });

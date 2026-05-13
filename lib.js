@@ -44,17 +44,34 @@ function parseConfigPathArg(argv) {
   return configPath;
 }
 
-function resolveConfigPaths(configSource) {
-  if (Array.isArray(configSource)) return configSource;
+function resolveConfigSource(configSource) {
+  if (Array.isArray(configSource)) {
+    return { paths: configSource, explicit: false };
+  }
   if (configSource && typeof configSource === "object") {
     const configPath = configSource.configPath ?? parseConfigPathArg(configSource.argv ?? []);
-    return configPath ? [resolve(configPath)] : getDefaultConfigPaths();
+    return configPath
+      ? { paths: [resolve(configPath)], explicit: true }
+      : { paths: getDefaultConfigPaths(), explicit: false };
   }
-  return getDefaultConfigPaths();
+  return { paths: getDefaultConfigPaths(), explicit: false };
 }
 
 export function loadConfig(configSource) {
-  for (const p of resolveConfigPaths(configSource)) {
+  const { paths, explicit } = resolveConfigSource(configSource);
+  if (explicit) {
+    const p = paths[0];
+    if (!existsSync(p)) {
+      throw new Error(`Config file not found: ${p}`);
+    }
+    try {
+      return yaml.load(readFileSync(p, "utf8")) ?? {};
+    } catch (err) {
+      throw new Error(`Failed to parse config at ${p}: ${err.message}`);
+    }
+  }
+
+  for (const p of paths) {
     if (!existsSync(p)) continue;
     try {
       return yaml.load(readFileSync(p, "utf8")) ?? {};
