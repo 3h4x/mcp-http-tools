@@ -4,7 +4,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig, validateConfig, configToTools, callTool } from "./lib.js";
 
-const config = loadConfig();
+let config;
+try {
+  config = loadConfig({ argv: process.argv.slice(2) });
+} catch (err) {
+  process.stderr.write(`[mcp-http-tools] ${err.message}\n`);
+  process.exit(1);
+}
 const configErrors = validateConfig(config);
 if (configErrors.length > 0) {
   for (const e of configErrors) process.stderr.write(`[mcp-http-tools] config error: ${e}\n`);

@@ -38,6 +38,12 @@ Run the server:
 node index.js
 ```
 
+To use a different config file for one run:
+
+```bash
+node index.js --config /path/to/config.yaml
+```
+
 ## Config reference
 
 Each tool supports:
@@ -146,12 +152,14 @@ Config is loaded from (first found wins):
 
 If neither exists, the server starts with no tools.
 
+Pass `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` to override the search path and load exactly one file.
+
 ## Use with Claude Desktop
 
 Via [supergateway](https://www.npmjs.com/package/supergateway) for SSE transport:
 
 ```bash
-pnpm dlx supergateway --stdio "node /path/to/mcp-http-tools/index.js" --port 9191
+pnpm dlx supergateway --stdio "node /path/to/mcp-http-tools/index.js --config /path/to/config.yaml" --port 9191
 ```
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
@@ -175,7 +183,7 @@ Add to `.claude/settings.json` or use as a stdio MCP server:
   "mcpServers": {
     "mcp-http-tools": {
       "command": "node",
-      "args": ["/path/to/mcp-http-tools/index.js"]
+      "args": ["/path/to/mcp-http-tools/index.js", "--config", "/path/to/config.yaml"]
     }
   }
 }

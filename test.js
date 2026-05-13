@@ -1639,6 +1639,51 @@ describe("loadConfig", () => {
     }
   });
 
+  it("loads config from a --config CLI override", () => {
+    const dir = join(tmpdir(), `mcp-test-cli-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "custom.yaml");
+    writeFileSync(p, "tools:\n  - name: cli_tool\n    url: http://localhost\n");
+    try {
+      const result = loadConfig({ argv: ["--config", p] });
+      assert.equal(result.tools.length, 1);
+      assert.equal(result.tools[0].name, "cli_tool");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("loads config from a --config=/path CLI override", () => {
+    const dir = join(tmpdir(), `mcp-test-cli-equals-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "custom.yaml");
+    writeFileSync(p, "tools:\n  - name: cli_equals_tool\n    url: http://localhost\n");
+    try {
+      const result = loadConfig({ argv: [`--config=${p}`] });
+      assert.equal(result.tools.length, 1);
+      assert.equal(result.tools[0].name, "cli_equals_tool");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("prefers explicit configPath over argv parsing", () => {
+    const dir = join(tmpdir(), `mcp-test-config-path-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "custom.yaml");
+    writeFileSync(p, "tools:\n  - name: direct_override\n    url: http://localhost\n");
+    try {
+      const result = loadConfig({
+        configPath: p,
+        argv: ["--config", "/does/not/exist.yaml"],
+      });
+      assert.equal(result.tools.length, 1);
+      assert.equal(result.tools[0].name, "direct_override");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
   it("returns empty object and writes to stderr when config YAML is malformed", () => {
     const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
@@ -1675,6 +1720,27 @@ describe("loadConfig", () => {
     const config = loadConfig();
     assert.equal(typeof config, "object");
     assert.notEqual(config, null);
+  });
+
+  it("throws when --config is missing its path value", () => {
+    assert.throws(
+      () => loadConfig({ argv: ["--config"] }),
+      /Missing value for "--config"/
+    );
+  });
+
+  it("throws when --config= is missing its path value", () => {
+    assert.throws(
+      () => loadConfig({ argv: ["--config="] }),
+      /Missing value for "--config"/
+    );
+  });
+
+  it("throws when --config is provided more than once", () => {
+    assert.throws(
+      () => loadConfig({ argv: ["--config", "a.yaml", "--config=b.yaml"] }),
+      /Duplicate "--config" flag/
+    );
   });
 
   it("returns empty object for an empty YAML file", () => {

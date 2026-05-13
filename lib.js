@@ -6,12 +6,55 @@ import yaml from "js-yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function loadConfig(paths) {
-  const defaultPaths = [
+function getDefaultConfigPaths() {
+  return [
     join(homedir(), ".config", "mcp-http-tools", "config.yaml"),
     resolve(__dirname, "config.yaml"),
   ];
-  for (const p of paths ?? defaultPaths) {
+}
+
+function parseConfigPathArg(argv) {
+  let configPath;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--config") {
+      const next = argv[i + 1];
+      if (!next || next.startsWith("--")) {
+        throw new Error('Missing value for "--config"');
+      }
+      if (configPath !== undefined) {
+        throw new Error('Duplicate "--config" flag');
+      }
+      configPath = next;
+      i++;
+      continue;
+    }
+
+    if (arg.startsWith("--config=")) {
+      const value = arg.slice("--config=".length);
+      if (!value) {
+        throw new Error('Missing value for "--config"');
+      }
+      if (configPath !== undefined) {
+        throw new Error('Duplicate "--config" flag');
+      }
+      configPath = value;
+    }
+  }
+  return configPath;
+}
+
+function resolveConfigPaths(configSource) {
+  if (Array.isArray(configSource)) return configSource;
+  if (configSource && typeof configSource === "object") {
+    const configPath = configSource.configPath ?? parseConfigPathArg(configSource.argv ?? []);
+    return configPath ? [resolve(configPath)] : getDefaultConfigPaths();
+  }
+  return getDefaultConfigPaths();
+}
+
+export function loadConfig(configSource) {
+  for (const p of resolveConfigPaths(configSource)) {
     if (!existsSync(p)) continue;
     try {
       return yaml.load(readFileSync(p, "utf8")) ?? {};

@@ -1,5 +1,6 @@
 # mcp-http-tools — example configuration
 # Copy to ~/.config/mcp-http-tools/config.yaml to override.
+# Or run `node index.js --config /path/to/config.yaml` to use a different file.
 #
 # Each tool maps to one HTTP request. Define as many as you need.
 # Raw path placeholders like {+path} preserve "/" separators, but each
