@@ -197,6 +197,8 @@ Add to `.claude/settings.json` or use as a stdio MCP server:
 pnpm test
 ```
 
+Pushes to `main` and pull requests also run `pnpm test` in GitHub Actions.
+
 ## Releasing
 
 `main` is released by GitHub Actions via semantic-release. Conventional commits on `main` determine the next version, create the GitHub release, and publish the package to npm.
