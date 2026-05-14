@@ -1685,6 +1685,23 @@ describe("loadConfig", () => {
     }
   });
 
+  it("resolves relative --config CLI overrides from the current working directory", () => {
+    const dir = join(tmpdir(), `mcp-test-cli-relative-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "custom.yaml");
+    writeFileSync(p, "tools:\n  - name: cli_relative_tool\n    url: http://localhost\n");
+    const previousCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const result = loadConfig({ argv: ["--config", "custom.yaml"] });
+      assert.equal(result.tools.length, 1);
+      assert.equal(result.tools[0].name, "cli_relative_tool");
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(dir, { recursive: true });
+    }
+  });
+
   it("returns empty object and writes to stderr when config YAML is malformed", () => {
     const dir = join(tmpdir(), `mcp-test-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
@@ -1840,6 +1857,26 @@ describe("index.js --config startup", () => {
     } finally {
       rmSync(dir, { recursive: true });
     }
+  });
+
+  it("exits non-zero when --config is missing its path value", () => {
+    const result = spawnSync(process.execPath, ["index.js", "--config"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /\[mcp-http-tools\] Missing value for "--config"/);
+  });
+
+  it("exits non-zero when --config is provided more than once", () => {
+    const result = spawnSync(process.execPath, ["index.js", "--config", "a.yaml", "--config=b.yaml"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /\[mcp-http-tools\] Duplicate "--config" flag/);
   });
 });
 
