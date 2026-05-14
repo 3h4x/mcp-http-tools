@@ -30,20 +30,22 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 
 ## Config features
 
-- GET params → query string, POST params → JSON body
+- GET params → query string, non-GET params → JSON body
 - `{param}` in URL → path substitution (excluded from query/body)
 - `{+path}` in URL → raw path substitution that preserves `/` separators
 - `{+path}` safety → reject empty segments and `.` / `..`; params used by `{+path}` must be `required: true` or have a safe non-empty `default`
+- `method` supports `GET`, `POST`, `PUT`, `PATCH`, `DELETE`
 - `${ENV_VAR}` in headers → env var substitution
 - `response.type: json` + `response.path` → dot-path JSON extraction
 - `default` on params → used when LLM omits the param
+- `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` → explicit config override that fails fast on missing files or invalid YAML
 
 ## Commands
 
 ```bash
 pnpm test        # ~250 tests (count grows; run to verify)
 pnpm install     # install deps using the committed pnpm lockfile
-node index.js    # start MCP server (stdio)
+pnpm start       # start MCP server (stdio)
 ```
 
 ## Config location
@@ -51,6 +53,8 @@ node index.js    # start MCP server (stdio)
 1. `~/.config/mcp-http-tools/config.yaml` (user config, not in repo)
 2. `./config.yaml` (example template)
 3. Empty `{}` if neither exists
+
+`--config /path/to/config.yaml` or `--config=/path/to/config.yaml` overrides the search path and requires that exact file to exist and parse successfully.
 
 ## Docs Reference
 
