@@ -90,11 +90,11 @@ tools: []
 #     response:
 #       type: text
 #
-#   # Auth via env var in headers
+#   # Auth via env var in headers (letters, digits, and underscores only)
 #   - name: list_alerts
 #     description: List active alerts
 #     url: http://localhost:9093/api/v2/alerts
-#     headers:
-#       Authorization: "Bearer ${ALERTMANAGER_TOKEN}"
+#     auth:
+#       bearer_env: ALERTMANAGER_TOKEN
 #     response:
 #       type: json

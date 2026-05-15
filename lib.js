@@ -107,6 +107,8 @@ export function substituteEnvVars(str) {
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
+const VALID_AUTH_KEYS = new Set(["bearer_env"]);
+const ENV_VAR_NAME_RE = /^\w+$/;
 const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 const INVALID_RAW_PATH_SEGMENTS = new Set(["", ".", ".."]);
 const URL_PLACEHOLDER_RE = /(?<!\$)\{(\+?[\w-]+)\}/g;
@@ -210,6 +212,20 @@ export function validateConfig(config) {
         }
       }
     }
+    if (tool.auth !== undefined && tool.auth !== null) {
+      if (typeof tool.auth !== "object" || Array.isArray(tool.auth)) {
+        errors.push(`${ref}: "auth" must be an object`);
+      } else {
+        for (const key of Object.keys(tool.auth)) {
+          if (!VALID_AUTH_KEYS.has(key)) {
+            errors.push(`${ref}: auth has unsupported field "${key}"`);
+          }
+        }
+        if (tool.auth.bearer_env !== undefined && !isValidEnvVarName(tool.auth.bearer_env)) {
+          errors.push(`${ref}: "auth.bearer_env" must be an environment variable name containing only letters, digits, and underscores`);
+        }
+      }
+    }
     if (tool.response?.type !== undefined && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
       errors.push(`${ref}: invalid response.type "${tool.response.type}" — expected "text" or "json"`);
     }
@@ -262,9 +278,10 @@ export function buildRequest(toolConfig, args) {
 
   if (toolConfig.headers) {
     for (const [k, v] of Object.entries(toolConfig.headers)) {
-      headers[k] = substituteEnvVars(v).replace(/[\r\n]/g, "");
+      headers[k] = sanitizeHeaderValue(v);
     }
   }
+  applyAuthPreset(toolConfig.auth, headers);
 
   const usedInUrl = new Set();
   const resolvedUrl = substituteEnvVars(toolConfig.url).replace(URL_PLACEHOLDER_SUB_RE, (_, raw, name) => {
@@ -330,6 +347,23 @@ export function buildRequest(toolConfig, args) {
 
 function toQueryString(val) {
   return (val !== null && typeof val === "object") ? JSON.stringify(val) : String(val);
+}
+
+function sanitizeHeaderValue(value) {
+  return substituteEnvVars(value).replace(/[\r\n]/g, "");
+}
+
+function applyAuthPreset(authConfig, headers) {
+  if (authConfig?.bearer_env === undefined) return;
+  if (!isValidEnvVarName(authConfig.bearer_env)) {
+    throw new Error('"auth.bearer_env" must be an environment variable name containing only letters, digits, and underscores');
+  }
+  if (Object.keys(headers).some(key => key.toLowerCase() === "authorization")) return;
+  headers.Authorization = sanitizeHeaderValue(`Bearer \${${authConfig.bearer_env}}`);
+}
+
+function isValidEnvVarName(value) {
+  return typeof value === "string" && ENV_VAR_NAME_RE.test(value);
 }
 
 function encodeRawPathParam(name, value) {

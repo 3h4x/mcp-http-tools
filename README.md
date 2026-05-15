@@ -55,7 +55,8 @@ Each tool supports:
 | `name` | yes | | MCP tool name |
 | `description` | no | `""` | Shown to the LLM |
 | `url` | yes | | Target HTTP endpoint. Supports `{param}` placeholders and `{+path}` raw path placeholders, including hyphenated names like `{user-id}` |
-| `method` | no | `GET` | HTTP method (`GET` or `POST`) |
+| `method` | no | `GET` | HTTP method (`GET`, `POST`, `PUT`, `PATCH`, or `DELETE`) |
+| `auth.bearer_env` | no | | Shorthand for `Authorization: Bearer ${ENV_VAR}`. The value must be an environment variable name containing only letters, digits, and underscores |
 | `headers` | no | | Static headers. Supports `${ENV_VAR}` substitution |
 | `params` | no | `[]` | Tool input parameters (see below) |
 | `response.type` | no | `text` | `text` (raw) or `json` (parsed) |
@@ -139,11 +140,13 @@ See [docs/raw-path-placeholders.md](docs/raw-path-placeholders.md) for the exact
 - name: list_alerts
   description: List active alerts
   url: http://localhost:9093/api/v2/alerts
-  headers:
-    Authorization: "Bearer ${ALERTMANAGER_TOKEN}"
+  auth:
+    bearer_env: ALERTMANAGER_TOKEN
   response:
     type: json
 ```
+
+Explicit `headers.Authorization` still wins if you need a non-Bearer scheme or a fully custom value.
 
 ## Config location
 

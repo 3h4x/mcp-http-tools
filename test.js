@@ -355,6 +355,56 @@ describe("buildRequest GET", () => {
     delete process.env.__TEST_TOKEN__;
   });
 
+  it("builds Authorization header from auth.bearer_env", () => {
+    process.env.__AUTH_TOKEN__ = "secret";
+    const tc = {
+      url: "http://localhost/api",
+      auth: { bearer_env: "__AUTH_TOKEN__" },
+      params: [],
+    };
+    const { options } = buildRequest(tc, {});
+    assert.equal(options.headers.Authorization, "Bearer secret");
+    delete process.env.__AUTH_TOKEN__;
+  });
+
+  it("does not override explicit Authorization header when auth.bearer_env is also set", () => {
+    process.env.__AUTH_TOKEN__ = "secret";
+    const tc = {
+      url: "http://localhost/api",
+      headers: { authorization: "Token custom" },
+      auth: { bearer_env: "__AUTH_TOKEN__" },
+      params: [],
+    };
+    const { options } = buildRequest(tc, {});
+    assert.equal(options.headers.authorization, "Token custom");
+    assert.equal(options.headers.Authorization, undefined);
+    delete process.env.__AUTH_TOKEN__;
+  });
+
+  it("strips CRLF from auth.bearer_env header values after env var substitution", () => {
+    process.env.__AUTH_TOKEN__ = "abc\r\ndef";
+    const tc = {
+      url: "http://localhost/api",
+      auth: { bearer_env: "__AUTH_TOKEN__" },
+      params: [],
+    };
+    const { options } = buildRequest(tc, {});
+    assert.equal(options.headers.Authorization, "Bearer abcdef");
+    delete process.env.__AUTH_TOKEN__;
+  });
+
+  it("rejects malformed auth.bearer_env when building Authorization header directly", () => {
+    const tc = {
+      url: "http://localhost/api",
+      auth: { bearer_env: "API-TOKEN" },
+      params: [],
+    };
+    assert.throws(
+      () => buildRequest(tc, {}),
+      /auth\.bearer_env/,
+    );
+  });
+
   it("omits headers object when no headers configured", () => {
     const tc = { url: "http://localhost/api", params: [] };
     const { options } = buildRequest(tc, {});
@@ -1100,6 +1150,35 @@ describe("validateConfig", () => {
   it("accepts valid headers object", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", headers: { Authorization: "Bearer token", "X-Custom": "value" } }] };
     assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("accepts auth.bearer_env", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", auth: { bearer_env: "API_TOKEN" } }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports invalid auth type", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", auth: ["bad"] }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"auth"'));
+  });
+
+  it("reports malformed auth.bearer_env values", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", auth: { bearer_env: "   " } }] };
+    const hyphenConfig = { tools: [{ name: "t", url: "http://localhost", auth: { bearer_env: "API-TOKEN" } }] };
+    for (const badConfig of [config, hyphenConfig]) {
+      const errors = validateConfig(badConfig);
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0].includes("auth.bearer_env"));
+    }
+  });
+
+  it("reports unsupported auth fields", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", auth: { basic_env: "TOKEN" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('unsupported field "basic_env"'));
   });
 
   it("reports error when headers is an array", () => {
@@ -2215,6 +2294,25 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, {});
     assert.equal(isError, undefined);
     assert.equal(text, "ok");
+  });
+
+  it("callTool: auth.bearer_env adds Authorization header", async () => {
+    process.env.__AUTH_TOKEN__ = "secret";
+    let capturedHeaders;
+    globalThis.fetch = async (_url, options) => {
+      capturedHeaders = options.headers;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "ok",
+      };
+    };
+    const toolConfig = { name: "t", url: "http://localhost/api", auth: { bearer_env: "__AUTH_TOKEN__" } };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedHeaders.Authorization, "Bearer secret");
+    delete process.env.__AUTH_TOKEN__;
   });
 
   it("callTool: missing url returns isError instead of throwing", async () => {
