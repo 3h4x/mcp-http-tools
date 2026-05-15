@@ -1764,6 +1764,23 @@ describe("loadConfig", () => {
     }
   });
 
+  it("resolves relative explicit configPath values from the current working directory", () => {
+    const dir = join(tmpdir(), `mcp-test-config-path-relative-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "custom.yaml");
+    writeFileSync(p, "tools:\n  - name: direct_relative_tool\n    url: http://localhost\n");
+    const previousCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const result = loadConfig({ configPath: "custom.yaml" });
+      assert.equal(result.tools.length, 1);
+      assert.equal(result.tools[0].name, "direct_relative_tool");
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(dir, { recursive: true });
+    }
+  });
+
   it("resolves relative --config CLI overrides from the current working directory", () => {
     const dir = join(tmpdir(), `mcp-test-cli-relative-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
@@ -1940,6 +1957,16 @@ describe("index.js --config startup", () => {
 
   it("exits non-zero when --config is missing its path value", () => {
     const result = spawnSync(process.execPath, ["index.js", "--config"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /\[mcp-http-tools\] Missing value for "--config"/);
+  });
+
+  it("exits non-zero when --config= is missing its path value", () => {
+    const result = spawnSync(process.execPath, ["index.js", "--config="], {
       cwd: process.cwd(),
       encoding: "utf8",
     });
@@ -2312,6 +2339,31 @@ describe("integration", () => {
     assert.equal(isError, undefined);
     assert.equal(text, "ok");
     assert.equal(capturedHeaders.Authorization, "Bearer secret");
+    delete process.env.__AUTH_TOKEN__;
+  });
+
+  it("callTool: explicit lowercase authorization header wins over auth.bearer_env", async () => {
+    process.env.__AUTH_TOKEN__ = "secret";
+    let capturedHeaders;
+    globalThis.fetch = async (_url, options) => {
+      capturedHeaders = options.headers;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "ok",
+      };
+    };
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      headers: { authorization: "Token custom" },
+      auth: { bearer_env: "__AUTH_TOKEN__" },
+    };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "ok");
+    assert.equal(capturedHeaders.authorization, "Token custom");
+    assert.equal(capturedHeaders.Authorization, undefined);
     delete process.env.__AUTH_TOKEN__;
   });
 
