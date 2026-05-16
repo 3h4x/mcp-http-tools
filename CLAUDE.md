@@ -38,12 +38,13 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 - `${ENV_VAR}` in headers → env var substitution
 - `response.type: json` + `response.path` → dot-path JSON extraction
 - `default` on params → used when LLM omits the param
+- `auth.bearer_env: MY_TOKEN` → shorthand for `Authorization: Bearer ${MY_TOKEN}` (value must be a valid env var name)
 - `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` → explicit config override that fails fast on missing files or invalid YAML
 
 ## Commands
 
 ```bash
-pnpm test        # ~250 tests (count grows; run to verify)
+pnpm test        # ~275 tests (count grows; run to verify)
 pnpm install     # install deps using the committed pnpm lockfile
 pnpm start       # start MCP server (stdio)
 ```
@@ -98,7 +99,7 @@ pnpm start       # start MCP server (stdio)
 3. Before adding any package, check it on the npm registry: download count, publish date, maintainer history. Verify the package name is not a typosquat.
 4. Run `pnpm audit` after any dependency change and resolve critical/high findings before committing.
 5. Never add packages with `postinstall` or `prepare` scripts without reviewing exactly what they execute.
-6. Prefer `pnpm` for install/update commands in both docs and local runs. Do not switch project instructions to `npm` while `packageManager` is pinned to `pnpm@10.33.0` and the repo lockfile is `pnpm-lock.yaml`.
+6. Prefer `pnpm` for install/update commands in both docs and local runs. Do not switch project instructions to `npm` while `packageManager` is pinned to `pnpm@10.33.0` and the repo lockfile is `pnpm-lock.yaml`. Note: consider upgrading to pnpm 11 when convenient.
 
 ## Architecture Patterns
 
@@ -128,8 +129,6 @@ pnpm start       # start MCP server (stdio)
 ### Future
 - **Response transforms** — beyond dot-path: templates or formatters for human-readable output
 - **Config merging** — load both global and local, merge tools arrays (shared + project-specific)
-- **Auth presets** — `auth: bearer_env: MY_TOKEN` shorthand instead of full headers
-- **Config via CLI flag** — `--config /path/to/config.yaml` override
 - **Hot reload** — watch config file, reload tools without restart
 - **Retry/backoff** — configurable retry for flaky endpoints
 - **Publish to npm**
