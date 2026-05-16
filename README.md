@@ -61,6 +61,22 @@ Each tool supports:
 | `params` | no | `[]` | Tool input parameters (see below) |
 | `response.type` | no | `text` | `text` (raw) or `json` (parsed) |
 | `response.path` | no | | Dot-path to extract from JSON (e.g. `data.result`) |
+| `retry.count` | no | `2` when `retry` is set | Number of retry attempts after the first request. Retries are disabled unless a `retry` object is present |
+| `retry.backoff_ms` | no | `250` when `retry` is set | Initial exponential backoff delay in milliseconds. The delay doubles after each failed attempt |
+
+### Retry
+
+Retries are opt-in per tool. Add a `retry` object to retry transient failures:
+
+```yaml
+retry:
+  count: 2
+  backoff_ms: 250
+```
+
+`count` is the number of retry attempts after the first request. `backoff_ms` is the initial delay, so `250` waits 250ms before the first retry and 500ms before the second. Each request attempt gets the configured `timeout`; the timeout is not shared across all attempts.
+
+Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request timeouts, and network errors reported by `fetch`.
 
 ### Params
 
@@ -92,6 +108,9 @@ See [docs/raw-path-placeholders.md](docs/raw-path-placeholders.md) for the exact
 - name: search_logs
   description: Search logs via LogQL
   url: http://localhost:3100/loki/api/v1/query_range
+  retry:
+    count: 2
+    backoff_ms: 250
   params:
     - name: query
       description: LogQL query

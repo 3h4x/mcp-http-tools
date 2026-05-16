@@ -911,6 +911,55 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("accepts valid retry config", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", retry: { count: 2, backoff_ms: 10 } }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("accepts empty retry object for default retry settings", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", retry: {} }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports retry when it is not an object", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", retry: "twice" }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("retry"));
+  });
+
+  it("reports unsupported retry fields", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", retry: { delay: 10 } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("unsupported"));
+    assert.ok(errors[0].includes("delay"));
+  });
+
+  it("reports invalid retry.count", () => {
+    const configs = [
+      { tools: [{ name: "t", url: "http://localhost", retry: { count: -1 } }] },
+      { tools: [{ name: "t", url: "http://localhost", retry: { count: 1.5 } }] },
+    ];
+    for (const config of configs) {
+      const errors = validateConfig(config);
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0].includes("retry.count"));
+    }
+  });
+
+  it("reports invalid retry.backoff_ms", () => {
+    const configs = [
+      { tools: [{ name: "t", url: "http://localhost", retry: { backoff_ms: -1 } }] },
+      { tools: [{ name: "t", url: "http://localhost", retry: { backoff_ms: Infinity } }] },
+    ];
+    for (const config of configs) {
+      const errors = validateConfig(config);
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0].includes("retry.backoff_ms"));
+    }
+  });
+
   it("reports duplicate tool names", () => {
     const config = { tools: [
       { name: "t", url: "http://localhost" },
@@ -2284,6 +2333,162 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, {});
     assert.equal(isError, true);
     assert.ok(text.includes("ECONNREFUSED"));
+  });
+
+  it("callTool: does not retry transient HTTP status without retry config", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("temporary failure");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api` };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, true);
+      assert.equal(text, "HTTP 500: temporary failure");
+      assert.equal(requests, 1);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: retries transient HTTP status and returns successful retry response", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      if (requests === 1) {
+        res.writeHead(503, { "Content-Type": "text/plain" });
+        res.end("try again");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: { ok: true } }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = {
+        name: "t",
+        url: `http://127.0.0.1:${port}/api`,
+        retry: { count: 2, backoff_ms: 0 },
+        response: { type: "json", path: "data.ok" },
+      };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, undefined);
+      assert.equal(text, "true");
+      assert.equal(requests, 2);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: does not retry non-transient HTTP status", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("bad request");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { count: 2, backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, true);
+      assert.equal(text, "HTTP 400: bad request");
+      assert.equal(requests, 1);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: returns final transient HTTP error after retry exhaustion", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      res.writeHead(503, { "Content-Type": "text/plain" });
+      res.end(`failure ${requests}`);
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { count: 2, backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, true);
+      assert.equal(text, "HTTP 503: failure 3");
+      assert.equal(requests, 3);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: retries timeout errors and can recover", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((req, res) => {
+      requests++;
+      req.on("aborted", () => {});
+      if (requests === 1) {
+        setTimeout(() => {
+          if (!res.destroyed) {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            res.end("late");
+          }
+        }, 100);
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, timeout: 20, retry: { count: 1, backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, undefined);
+      assert.equal(text, "ok");
+      assert.equal(requests, 2);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: retries network errors and can recover", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      if (requests === 1) {
+        res.destroy();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { count: 1, backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, undefined);
+      assert.equal(text, "ok");
+      assert.equal(requests, 2);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
   });
 
   it("callTool: null args falls back to empty object without throwing", async () => {

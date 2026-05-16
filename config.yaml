@@ -8,6 +8,9 @@
 # Raw path placeholders like {+path} preserve "/" separators, but each
 # segment must be non-empty and cannot be "." or "..". Params used by
 # {+path} must be required or provide a safe non-empty default.
+# Retries are opt-in. Add `retry:` to retry HTTP 408, 429, 500, 502, 503,
+# 504, request timeouts, and network errors. `count` is the number of retry
+# attempts after the first request; `backoff_ms` doubles after each retry.
 
 tools: []
 
@@ -32,6 +35,9 @@ tools: []
 #     description: Search logs via LogQL
 #     method: GET
 #     url: http://localhost:3100/loki/api/v1/query_range
+#     retry:
+#       count: 2
+#       backoff_ms: 250
 #     params:
 #       - name: query
 #         description: LogQL query

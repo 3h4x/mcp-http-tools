@@ -108,6 +108,7 @@ const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const VALID_AUTH_KEYS = new Set(["bearer_env"]);
+const VALID_RETRY_KEYS = new Set(["count", "backoff_ms"]);
 const ENV_VAR_NAME_RE = /^\w+$/;
 const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 const INVALID_RAW_PATH_SEGMENTS = new Set(["", ".", ".."]);
@@ -237,6 +238,23 @@ export function validateConfig(config) {
     }
     if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || !Number.isFinite(tool.timeout) || tool.timeout <= 0)) {
       errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);
+    }
+    if (tool.retry !== undefined && tool.retry !== null) {
+      if (typeof tool.retry !== "object" || Array.isArray(tool.retry)) {
+        errors.push(`${ref}: "retry" must be an object`);
+      } else {
+        for (const key of Object.keys(tool.retry)) {
+          if (!VALID_RETRY_KEYS.has(key)) {
+            errors.push(`${ref}: retry has unsupported field "${key}"`);
+          }
+        }
+        if (tool.retry.count !== undefined && (!Number.isInteger(tool.retry.count) || tool.retry.count < 0)) {
+          errors.push(`${ref}: "retry.count" must be a non-negative integer`);
+        }
+        if (tool.retry.backoff_ms !== undefined && (typeof tool.retry.backoff_ms !== "number" || !Number.isFinite(tool.retry.backoff_ms) || tool.retry.backoff_ms < 0)) {
+          errors.push(`${ref}: "retry.backoff_ms" must be a non-negative number (milliseconds)`);
+        }
+      }
     }
   }
   return errors;
@@ -384,27 +402,80 @@ function isSafeRawPathValue(value) {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ERROR_BODY_CHARS = 2000;
+const DEFAULT_RETRY_COUNT = 2;
+const DEFAULT_RETRY_BACKOFF_MS = 250;
+const TRANSIENT_HTTP_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+
+function getRetryConfig(toolConfig) {
+  if (toolConfig.retry == null) {
+    return { count: 0, backoffMs: 0 };
+  }
+  return {
+    count: toolConfig.retry.count ?? DEFAULT_RETRY_COUNT,
+    backoffMs: toolConfig.retry.backoff_ms ?? DEFAULT_RETRY_BACKOFF_MS,
+  };
+}
+
+function getRetryDelayMs(retryConfig, attempt) {
+  if (retryConfig.backoffMs <= 0) return 0;
+  return retryConfig.backoffMs * (2 ** attempt);
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function shouldRetryStatus(status, attempt, retryConfig) {
+  return attempt < retryConfig.count && TRANSIENT_HTTP_STATUS_CODES.has(status);
+}
+
+function shouldRetryError(err, attempt, retryConfig) {
+  if (attempt >= retryConfig.count) return false;
+  return err?.name === "AbortError" || err instanceof TypeError;
+}
 
 export async function callTool(toolConfig, args) {
   const timeout = toolConfig.timeout ?? DEFAULT_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
+  const retryConfig = getRetryConfig(toolConfig);
+
   try {
     const { url, options } = buildRequest(toolConfig, args);
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    const raw = await res.text();
-    if (!res.ok) {
-      const body = raw.length > MAX_ERROR_BODY_CHARS
-        ? `${raw.slice(0, MAX_ERROR_BODY_CHARS)}… (truncated, showing ${MAX_ERROR_BODY_CHARS}/${raw.length} chars)`
-        : raw;
-      return { text: `HTTP ${res.status}: ${body}`, isError: true };
+
+    for (let attempt = 0; ; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        const raw = await res.text();
+        if (!res.ok) {
+          if (shouldRetryStatus(res.status, attempt, retryConfig)) {
+            const delayMs = getRetryDelayMs(retryConfig, attempt);
+            clearTimeout(timer);
+            await wait(delayMs);
+            continue;
+          }
+          const body = raw.length > MAX_ERROR_BODY_CHARS
+            ? `${raw.slice(0, MAX_ERROR_BODY_CHARS)}… (truncated, showing ${MAX_ERROR_BODY_CHARS}/${raw.length} chars)`
+            : raw;
+          return { text: `HTTP ${res.status}: ${body}`, isError: true };
+        }
+        return { text: extractResponse(raw, toolConfig.response) };
+      } catch (err) {
+        if (shouldRetryError(err, attempt, retryConfig)) {
+          const delayMs = getRetryDelayMs(retryConfig, attempt);
+          clearTimeout(timer);
+          await wait(delayMs);
+          continue;
+        }
+        const msg = err.name === "AbortError" ? `Request timed out after ${timeout}ms` : (err.message ?? String(err));
+        return { text: `Error: ${msg}`, isError: true };
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    return { text: extractResponse(raw, toolConfig.response) };
   } catch (err) {
-    const msg = err.name === "AbortError" ? `Request timed out after ${timeout}ms` : (err.message ?? String(err));
+    const msg = err?.name === "AbortError" ? `Request timed out after ${timeout}ms` : (err?.message ?? String(err));
     return { text: `Error: ${msg}`, isError: true };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
