@@ -2433,6 +2433,78 @@ describe("integration", () => {
     }
   });
 
+  it("callTool: omitted retry.count uses default count of 2 (exhaustion path)", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      res.writeHead(503, { "Content-Type": "text/plain" });
+      res.end(`failure ${requests}`);
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      // backoff_ms: 0 to keep test fast; count is omitted so DEFAULT_RETRY_COUNT (2) applies
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, true);
+      assert.equal(text, "HTTP 503: failure 3");
+      assert.equal(requests, 3, "initial attempt + 2 default retries = 3 total");
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: retry.count of 0 does not retry transient errors", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      res.writeHead(503, { "Content-Type": "text/plain" });
+      res.end("unavailable");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { count: 0, backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, true);
+      assert.equal(text, "HTTP 503: unavailable");
+      assert.equal(requests, 1, "count:0 means no retries — only the initial attempt");
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: retries 429 Too Many Requests and recovers", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      if (requests === 1) {
+        res.writeHead(429, { "Content-Type": "text/plain" });
+        res.end("rate limited");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { count: 1, backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, undefined);
+      assert.equal(text, "ok");
+      assert.equal(requests, 2);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
   it("callTool: retries timeout errors and can recover", async () => {
     globalThis.fetch = realFetch;
     let requests = 0;
