@@ -1998,6 +1998,13 @@ describe("loadConfig", () => {
     );
   });
 
+  it("throws when mixed --config flag forms are both provided", () => {
+    assert.throws(
+      () => loadConfig({ argv: ["--config=a.yaml", "--config", "b.yaml"] }),
+      /Duplicate "--config" flag/
+    );
+  });
+
   it("throws when a --config CLI override file does not exist", () => {
     assert.throws(
       () => loadConfig({ argv: ["--config", "/does/not/exist.yaml"] }),
@@ -2118,6 +2125,16 @@ describe("index.js --config startup", () => {
 
   it("exits non-zero when --config is provided more than once", () => {
     const result = spawnSync(process.execPath, ["index.js", "--config", "a.yaml", "--config=b.yaml"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /\[mcp-http-tools\] Duplicate "--config" flag/);
+  });
+
+  it("exits non-zero when mixed --config flag forms are both provided", () => {
+    const result = spawnSync(process.execPath, ["index.js", "--config=a.yaml", "--config", "b.yaml"], {
       cwd: process.cwd(),
       encoding: "utf8",
     });
