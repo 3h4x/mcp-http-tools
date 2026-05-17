@@ -11,6 +11,9 @@
 # Retries are opt-in. Add `retry:` to retry HTTP 408, 429, 500, 502, 503,
 # 504, request timeouts, and network errors. `count` is the number of retry
 # attempts after the first request; `backoff_ms` doubles after each retry.
+# Params can declare `enum:` choices. Enum values must be a non-empty list,
+# match the param `type` when one is set, and any `default` must be one of
+# the enum values.
 
 tools: []
 
@@ -42,6 +45,10 @@ tools: []
 #       - name: query
 #         description: LogQL query
 #         required: true
+#       - name: direction
+#         description: Query direction
+#         enum: [forward, backward]
+#         default: backward
 #       - name: limit
 #         description: Max results
 #         default: "50"

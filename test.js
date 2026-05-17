@@ -1159,6 +1159,63 @@ describe("validateConfig", () => {
     }
   });
 
+  it("accepts enum values that match the declared param type", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [
+          { name: "format", type: "string", enum: ["json", "csv"] },
+          { name: "limit", type: "integer", enum: [10, 25, 50], default: 25 },
+          { name: "verbose", type: "boolean", enum: [true, false], default: false },
+          { name: "filters", type: "array", enum: [["a"], ["a", "b"]] },
+          { name: "metadata", type: "object", enum: [{ scope: "team" }, { scope: "global" }] },
+        ],
+      }],
+    };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports non-array or empty enum values", () => {
+    const configs = [
+      { tools: [{ name: "t", url: "http://localhost", params: [{ name: "format", enum: "json" }] }] },
+      { tools: [{ name: "t", url: "http://localhost", params: [{ name: "format", enum: [] }] }] },
+    ];
+    for (const config of configs) {
+      const errors = validateConfig(config);
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0].includes('"enum"'));
+    }
+  });
+
+  it("reports enum values that do not match the declared param type", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "limit", type: "integer", enum: [10, 25.5] }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('type "integer"'));
+    assert.ok(errors[0].includes("25.5"));
+  });
+
+  it("reports defaults that are not present in enum values", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "format", type: "string", enum: ["json", "csv"], default: "xml" }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("default"));
+    assert.ok(errors[0].includes("enum"));
+  });
+
   it("reports duplicate param names within a tool", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q" }, { name: "q" }] }] };
     const errors = validateConfig(config);

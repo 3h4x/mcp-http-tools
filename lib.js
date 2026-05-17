@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { isDeepStrictEqual } from "node:util";
 import yaml from "js-yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -201,6 +202,23 @@ export function validateConfig(config) {
       if (param.type !== undefined && !VALID_PARAM_TYPES.has(param.type)) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
       }
+      if (param.enum !== undefined) {
+        if (!Array.isArray(param.enum) || param.enum.length === 0) {
+          errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} "enum" must be a non-empty array`);
+        } else {
+          if (param.type !== undefined) {
+            for (const value of param.enum) {
+              if (!isValidParamValueForType(value, param.type)) {
+                errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} enum value ${JSON.stringify(value)} does not match declared type "${param.type}"`);
+                break;
+              }
+            }
+          }
+          if (param.default !== undefined && !param.enum.some(value => isDeepStrictEqual(value, param.default))) {
+            errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} default must be one of the enum values`);
+          }
+        }
+      }
     }
     if (tool.headers !== undefined && tool.headers !== null) {
       if (typeof tool.headers !== "object" || Array.isArray(tool.headers)) {
@@ -382,6 +400,25 @@ function applyAuthPreset(authConfig, headers) {
 
 function isValidEnvVarName(value) {
   return typeof value === "string" && ENV_VAR_NAME_RE.test(value);
+}
+
+function isValidParamValueForType(value, type) {
+  switch (type) {
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return Number.isInteger(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return value !== null && typeof value === "object" && !Array.isArray(value);
+    default:
+      return true;
+  }
 }
 
 function encodeRawPathParam(name, value) {

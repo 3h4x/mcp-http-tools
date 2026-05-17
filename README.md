@@ -84,9 +84,10 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 |-------|----------|---------|-------------|
 | `name` | yes | | Parameter name |
 | `description` | no | | Shown to the LLM |
-| `type` | no | `string` | JSON Schema type (`string`, `number`, `boolean`) |
+| `type` | no | `string` | JSON Schema type (`string`, `number`, `integer`, `boolean`, `array`, or `object`) |
+| `enum` | no | | Non-empty list of allowed values. When `type` is set, every enum value must match it |
 | `required` | no | `false` | Whether the LLM must provide this |
-| `default` | no | | Value used when param is omitted |
+| `default` | no | | Value used when param is omitted. If `enum` is set, the default must be one of those values |
 
 ### How params map to requests
 
@@ -115,6 +116,10 @@ See [docs/raw-path-placeholders.md](docs/raw-path-placeholders.md) for the exact
     - name: query
       description: LogQL query
       required: true
+    - name: direction
+      description: Query direction
+      enum: [forward, backward]
+      default: backward
     - name: limit
       default: "50"
   response:
