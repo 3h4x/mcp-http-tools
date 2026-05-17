@@ -1176,6 +1176,17 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("accepts string enum values when param type is omitted", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "format", enum: ["json", "csv"], default: "json" }],
+      }],
+    };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
   it("reports non-array or empty enum values", () => {
     const configs = [
       { tools: [{ name: "t", url: "http://localhost", params: [{ name: "format", enum: "json" }] }] },
@@ -1200,6 +1211,30 @@ describe("validateConfig", () => {
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes('type "integer"'));
     assert.ok(errors[0].includes("25.5"));
+  });
+
+  it("reports enum values that do not match the default string param type", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "limit", enum: [1, 2] }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('type "string"'));
+    assert.ok(errors[0].includes("1"));
+  });
+
+  it("accepts numeric enum values when a numeric param type is declared", () => {
+    const configs = [
+      { tools: [{ name: "t", url: "http://localhost", params: [{ name: "limit", type: "number", enum: [1, 2.5] }] }] },
+      { tools: [{ name: "t", url: "http://localhost", params: [{ name: "limit", type: "integer", enum: [1, 2] }] }] },
+    ];
+    for (const config of configs) {
+      assert.deepEqual(validateConfig(config), []);
+    }
   });
 
   it("reports defaults that are not present in enum values", () => {

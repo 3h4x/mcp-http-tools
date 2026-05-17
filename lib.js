@@ -199,17 +199,19 @@ export function validateConfig(config) {
       if (param.required === true && param.default !== undefined) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} cannot have both "required: true" and a "default"`);
       }
-      if (param.type !== undefined && !VALID_PARAM_TYPES.has(param.type)) {
+      const hasValidParamType = param.type === undefined || VALID_PARAM_TYPES.has(param.type);
+      if (!hasValidParamType) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
       }
       if (param.enum !== undefined) {
         if (!Array.isArray(param.enum) || param.enum.length === 0) {
           errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} "enum" must be a non-empty array`);
         } else {
-          if (param.type !== undefined) {
+          if (hasValidParamType) {
+            const effectiveType = param.type ?? "string";
             for (const value of param.enum) {
-              if (!isValidParamValueForType(value, param.type)) {
-                errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} enum value ${JSON.stringify(value)} does not match declared type "${param.type}"`);
+              if (!isValidParamValueForType(value, effectiveType)) {
+                errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} enum value ${JSON.stringify(value)} does not match declared type "${effectiveType}"`);
                 break;
               }
             }
