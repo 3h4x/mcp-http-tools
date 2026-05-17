@@ -39,12 +39,15 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 - `response.type: json` + `response.path` → dot-path JSON extraction
 - `default` on params → used when LLM omits the param
 - `auth.bearer_env: MY_TOKEN` → shorthand for `Authorization: Bearer ${MY_TOKEN}` (value must be a valid env var name)
+- `retry.count` + `retry.backoff_ms` → opt-in retries for transient HTTP/network failures with exponential backoff
 - `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` → explicit config override that fails fast on missing files or invalid YAML
 
 ## Commands
 
+Package manager: `pnpm` (prefer pnpm 11; this repo is currently pinned to `pnpm@10.33.0` and should be upgraded when convenient).
+
 ```bash
-pnpm test        # ~275 tests (count grows; run to verify)
+pnpm test        # ~290 tests (count grows; run to verify)
 pnpm install     # install deps using the committed pnpm lockfile
 pnpm start       # start MCP server (stdio)
 ```
@@ -123,12 +126,8 @@ pnpm start       # start MCP server (stdio)
 
 ## Next steps
 
-### Before publishing
-- **GitHub Actions** — CI workflow to run tests on push/PR, release workflow for npm publish on tag (reuse patterns from existing repos)
-
 ### Future
 - **Response transforms** — beyond dot-path: templates or formatters for human-readable output
 - **Config merging** — load both global and local, merge tools arrays (shared + project-specific)
 - **Hot reload** — watch config file, reload tools without restart
-- **Retry/backoff** — configurable retry for flaky endpoints
 - **Publish to npm**
