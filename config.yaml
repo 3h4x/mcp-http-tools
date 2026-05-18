@@ -14,6 +14,9 @@
 # Params can declare `enum:` choices. Enum values must be a non-empty list,
 # match the param `type` when one is set, and any `default` must be one of
 # the enum values.
+# JSON responses can also use `response.template:` with `{dot.path}`
+# placeholders for human-readable output. Missing placeholders are left
+# unchanged.
 
 tools: []
 
@@ -77,6 +80,14 @@ tools: []
 #     url: http://localhost:3000/health
 #     response:
 #       type: text
+#
+#   # JSON response template for human-readable output
+#   - name: summarize_build
+#     description: Summarize the latest build result
+#     url: http://localhost:3000/builds/latest
+#     response:
+#       type: json
+#       template: "Build {id}: {status} ({timing.duration_ms} ms)"
 #
 #   # Raw path placeholder for slash-separated keys
 #   - name: get_job_file

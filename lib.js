@@ -115,6 +115,7 @@ const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 const INVALID_RAW_PATH_SEGMENTS = new Set(["", ".", ".."]);
 const URL_PLACEHOLDER_RE = /(?<!\$)\{(\+?[\w-]+)\}/g;
 const URL_PLACEHOLDER_SUB_RE = /\{(\+?)([\w-]+)\}/g;
+const RESPONSE_TEMPLATE_PLACEHOLDER_RE = /\{([\w.-]+)\}/g;
 
 export function validateConfig(config) {
   const errors = [];
@@ -255,6 +256,12 @@ export function validateConfig(config) {
     }
     if (tool.response?.path !== undefined && (tool.response?.type ?? "text") !== "json") {
       errors.push(`${ref}: "response.path" requires response.type "json"`);
+    }
+    if (tool.response?.template !== undefined && (typeof tool.response.template !== "string" || tool.response.template.trim() === "")) {
+      errors.push(`${ref}: "response.template" must be a non-empty string`);
+    }
+    if (tool.response?.template !== undefined && (tool.response?.type ?? "text") !== "json") {
+      errors.push(`${ref}: "response.template" requires response.type "json"`);
     }
     if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || !Number.isFinite(tool.timeout) || tool.timeout <= 0)) {
       errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);
@@ -529,11 +536,22 @@ export function extractResponse(raw, responseConfig) {
     return raw;
   }
 
+  let extracted = parsed;
   if (responseConfig?.path) {
-    const extracted = resolvePath(parsed, responseConfig.path);
+    extracted = resolvePath(parsed, responseConfig.path);
     if (extracted === undefined) return raw;
-    if (typeof extracted === "string") return extracted;
-    return JSON.stringify(extracted, null, 2);
   }
-  return JSON.stringify(parsed, null, 2);
+
+  if (responseConfig?.template) {
+    return responseConfig.template.replace(RESPONSE_TEMPLATE_PLACEHOLDER_RE, (match, path) => {
+      const value = resolvePath(extracted, path);
+      if (value === undefined) return match;
+      if (typeof value === "string") return value;
+      if (value !== null && typeof value === "object") return JSON.stringify(value);
+      return String(value);
+    });
+  }
+
+  if (typeof extracted === "string") return extracted;
+  return JSON.stringify(extracted, null, 2);
 }

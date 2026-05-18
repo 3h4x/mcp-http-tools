@@ -61,6 +61,7 @@ Each tool supports:
 | `params` | no | `[]` | Tool input parameters (see below) |
 | `response.type` | no | `text` | `text` (raw) or `json` (parsed) |
 | `response.path` | no | | Dot-path to extract from JSON (e.g. `data.result`) |
+| `response.template` | no | | JSON-only output template using `{dot.path}` placeholders (e.g. `Status: {status}`) |
 | `retry.count` | no | `2` when `retry` is set | Number of retry attempts after the first request. Retries are disabled unless a `retry` object is present |
 | `retry.backoff_ms` | no | `250` when `retry` is set | Initial exponential backoff delay in milliseconds. The delay doubles after each failed attempt |
 
@@ -98,6 +99,14 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 - **Raw path safety**: `{+path}` rejects empty segments and `.` / `..` segments so callers cannot escape the configured URL prefix
 - **Raw path config contract**: params used by `{+path}` must be `required: true` or have a safe non-empty `default`
 - **Placeholder names**: placeholder matching uses the param `name`, so names like `{user-id}` and `{+file-path}` are valid
+
+### Response shaping
+
+- `response.type: text` passes the upstream body through unchanged.
+- `response.type: json` pretty-prints parsed JSON by default.
+- `response.path` extracts one dot-path from parsed JSON. Missing paths fall back to the raw upstream body.
+- `response.template` formats parsed JSON with `{dot.path}` placeholders. Missing placeholders are left unchanged so config mistakes stay visible.
+- When both `response.path` and `response.template` are set, the template runs against the extracted subtree.
 
 See [docs/raw-path-placeholders.md](docs/raw-path-placeholders.md) for the exact `{+path}` contract.
 
@@ -156,6 +165,17 @@ See [docs/raw-path-placeholders.md](docs/raw-path-placeholders.md) for the exact
   response:
     type: json
     path: data
+```
+
+### JSON response template
+
+```yaml
+- name: summarize_build
+  description: Summarize the latest build result
+  url: http://localhost:3000/builds/latest
+  response:
+    type: json
+    template: "Build {id}: {status} ({timing.duration_ms} ms)"
 ```
 
 ### Auth via environment variable

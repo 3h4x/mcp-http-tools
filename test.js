@@ -1136,6 +1136,21 @@ describe("validateConfig", () => {
     assert.ok(errors[0].includes("response.path"));
   });
 
+  it("reports response.template without response.type json", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { template: "Count: {data.count}" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.template"));
+    assert.ok(errors[0].includes('"json"'));
+  });
+
+  it("reports response.template when response.type is text", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "text", template: "{message}" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.template"));
+  });
+
   it("reports invalid param type", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q", type: "str" }] }] };
     const errors = validateConfig(config);
@@ -1285,6 +1300,25 @@ describe("validateConfig", () => {
 
   it("accepts valid response.path", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", path: "data.result" } }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports empty response.template", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", template: "" } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.template"));
+  });
+
+  it("reports whitespace-only response.template", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", template: "   " } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.template"));
+  });
+
+  it("accepts valid response.template", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", template: "Count: {data.count}" } }] };
     assert.deepEqual(validateConfig(config), []);
   });
 
@@ -1832,6 +1866,38 @@ describe("extractResponse", () => {
     const raw = JSON.stringify({ items: [{ id: 1 }, { id: 2 }] });
     const result = extractResponse(raw, { type: "json", path: "items" });
     assert.deepEqual(JSON.parse(result), [{ id: 1 }, { id: 2 }]);
+  });
+
+  it("renders response.template from parsed JSON", () => {
+    const raw = JSON.stringify({ status: "ok", data: { count: 3 } });
+    assert.equal(
+      extractResponse(raw, { type: "json", template: "Status: {status}; count: {data.count}" }),
+      "Status: ok; count: 3"
+    );
+  });
+
+  it("renders response.template relative to response.path", () => {
+    const raw = JSON.stringify({ data: { result: { name: "jobs", items: [1, 2] } } });
+    assert.equal(
+      extractResponse(raw, { type: "json", path: "data.result", template: "{name}: {items}" }),
+      'jobs: [1,2]'
+    );
+  });
+
+  it("leaves unresolved response.template placeholders unchanged", () => {
+    const raw = JSON.stringify({ status: "ok" });
+    assert.equal(
+      extractResponse(raw, { type: "json", template: "Status: {status}; count: {data.count}" }),
+      "Status: ok; count: {data.count}"
+    );
+  });
+
+  it("returns raw text when response.path for template resolves to undefined", () => {
+    const raw = JSON.stringify({ status: "ok" });
+    assert.equal(
+      extractResponse(raw, { type: "json", path: "data.result", template: "{count}" }),
+      raw
+    );
   });
 });
 
