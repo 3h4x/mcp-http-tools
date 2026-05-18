@@ -2680,6 +2680,57 @@ describe("integration", () => {
     }
   });
 
+  it("callTool: retries other transient HTTP statuses and recovers", async () => {
+    globalThis.fetch = realFetch;
+    for (const status of [408, 502, 504]) {
+      let requests = 0;
+      const server = createServer((_req, res) => {
+        requests++;
+        if (requests === 1) {
+          res.writeHead(status, { "Content-Type": "text/plain" });
+          res.end(`transient ${status}`);
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(`ok ${status}`);
+      });
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+
+      try {
+        const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { count: 1, backoff_ms: 0 } };
+        const { text, isError } = await callTool(toolConfig, {});
+        assert.equal(isError, undefined);
+        assert.equal(text, `ok ${status}`);
+        assert.equal(requests, 2, `expected one retry for HTTP ${status}`);
+      } finally {
+        await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      }
+    }
+  });
+
+  it("callTool: returns final HTTP 504 error after retry exhaustion", async () => {
+    globalThis.fetch = realFetch;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      res.writeHead(504, { "Content-Type": "text/plain" });
+      res.end(`gateway timeout ${requests}`);
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = { name: "t", url: `http://127.0.0.1:${port}/api`, retry: { count: 2, backoff_ms: 0 } };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, true);
+      assert.equal(text, "HTTP 504: gateway timeout 3");
+      assert.equal(requests, 3);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
   it("callTool: retries timeout errors and can recover", async () => {
     globalThis.fetch = realFetch;
     let requests = 0;
