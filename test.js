@@ -2208,6 +2208,25 @@ describe("index.js --config startup", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /\[mcp-http-tools\] Duplicate "--config" flag/);
   });
+
+  it("exits non-zero when the explicit config file contains validation errors", () => {
+    const dir = join(tmpdir(), `mcp-test-cli-invalid-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "invalid.yaml");
+    writeFileSync(p, "tools:\n  - name: bad tool\n    url: http://localhost\n");
+
+    try {
+      const result = spawnSync(process.execPath, ["index.js", "--config", p], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /\[mcp-http-tools\] config error: .*tool name/);
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
 });
 
 // ── integration: config → buildRequest → extractResponse ──────────────────
@@ -2354,6 +2373,30 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, {});
     assert.equal(isError, undefined);
     assert.equal(text, "42");
+  });
+
+  it("callTool: success path formats response.template from parsed JSON", async () => {
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      response: { type: "json", template: "Build {id}: {status} ({timing.duration_ms} ms)" },
+    };
+    mockFetch({ id: "42", status: "ok", timing: { duration_ms: 15 } });
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "Build 42: ok (15 ms)");
+  });
+
+  it("callTool: response.path and response.template format the extracted subtree", async () => {
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      response: { type: "json", path: "data.result", template: "{name}: {items}" },
+    };
+    mockFetch({ data: { result: { name: "jobs", items: [1, 2] } } });
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, undefined);
+    assert.equal(text, "jobs: [1,2]");
   });
 
   it("callTool: GET supports hyphenated standard and raw path placeholders with a real local server", async () => {
