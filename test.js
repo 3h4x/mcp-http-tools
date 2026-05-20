@@ -1922,6 +1922,22 @@ describe("extractResponse", () => {
     );
   });
 
+  it("stringifies object values in response.template placeholders", () => {
+    const raw = JSON.stringify({ build: { id: 42, status: "ok" } });
+    assert.equal(
+      extractResponse(raw, { type: "json", template: "Build: {build}" }),
+      'Build: {"id":42,"status":"ok"}'
+    );
+  });
+
+  it("renders null values in response.template placeholders", () => {
+    const raw = JSON.stringify({ data: { nextCursor: null } });
+    assert.equal(
+      extractResponse(raw, { type: "json", template: "Next: {data.nextCursor}" }),
+      "Next: null"
+    );
+  });
+
   it("leaves unresolved response.template placeholders unchanged", () => {
     const raw = JSON.stringify({ status: "ok" });
     assert.equal(
@@ -2131,6 +2147,21 @@ describe("loadConfig", () => {
     try {
       assert.throws(
         () => loadConfig({ argv: ["--config", p] }),
+        /Failed to parse config at .*bad\.yaml/
+      );
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("throws when an explicit configPath file contains invalid YAML", () => {
+    const dir = join(tmpdir(), `mcp-test-config-path-bad-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "bad.yaml");
+    writeFileSync(p, "tools:\n  - name: [invalid yaml\n");
+    try {
+      assert.throws(
+        () => loadConfig({ configPath: p }),
         /Failed to parse config at .*bad\.yaml/
       );
     } finally {
@@ -2709,6 +2740,59 @@ describe("integration", () => {
       assert.equal(requests, 3, "initial attempt + 2 default retries = 3 total");
     } finally {
       await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("callTool: omitted retry.backoff_ms uses default exponential delays", async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timeoutMs = 9999;
+    const seenDelays = [];
+    const activeTimers = new Set();
+    let nextTimerId = 1;
+    let attempts = 0;
+
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      const timerId = nextTimerId++;
+      activeTimers.add(timerId);
+      seenDelays.push(ms);
+      if (ms !== timeoutMs) {
+        queueMicrotask(() => {
+          if (activeTimers.has(timerId)) callback(...args);
+        });
+      }
+      return timerId;
+    };
+    globalThis.clearTimeout = (timerId) => {
+      activeTimers.delete(timerId);
+    };
+    globalThis.fetch = async () => {
+      attempts++;
+      if (attempts < 3) {
+        throw new TypeError("socket hang up");
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "ok",
+      };
+    };
+
+    try {
+      const toolConfig = {
+        name: "t",
+        url: "http://localhost/api",
+        timeout: timeoutMs,
+        retry: { count: 2 },
+      };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, undefined);
+      assert.equal(text, "ok");
+      assert.equal(attempts, 3);
+      assert.deepEqual(seenDelays.filter(ms => ms !== timeoutMs), [250, 500]);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
     }
   });
 
