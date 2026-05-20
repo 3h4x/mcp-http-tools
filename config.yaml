@@ -12,8 +12,9 @@
 # 504, request timeouts, and network errors. `count` is the number of retry
 # attempts after the first request; `backoff_ms` doubles after each retry.
 # Params can declare `enum:` choices. Enum values must be a non-empty list,
-# match the param `type` when one is set, and any `default` must be one of
-# the enum values.
+# and both enum values and any `default` must match the effective param type
+# (`string` when `type` is omitted). When `enum` is set, the `default` must
+# also be one of the enum values.
 # JSON responses can also use `response.template:` with `{dot.path}`
 # placeholders for human-readable output. Missing placeholders are left
 # unchanged.

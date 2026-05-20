@@ -1174,6 +1174,44 @@ describe("validateConfig", () => {
     }
   });
 
+  it("accepts defaults that match the effective param type", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [
+          { name: "format", default: "json" },
+          { name: "limit", type: "number", default: 10.5 },
+          { name: "page", type: "integer", default: 2 },
+          { name: "verbose", type: "boolean", default: false },
+          { name: "filters", type: "array", default: ["a", "b"] },
+          { name: "metadata", type: "object", default: { scope: "team" } },
+        ],
+      }],
+    };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports defaults that do not match the effective param type", () => {
+    const configs = [
+      { param: { name: "format", default: 1 }, expectedType: "string", expectedValue: "1" },
+      { param: { name: "limit", type: "number", default: "10" }, expectedType: "number", expectedValue: '"10"' },
+      { param: { name: "page", type: "integer", default: 2.5 }, expectedType: "integer", expectedValue: "2.5" },
+      { param: { name: "verbose", type: "boolean", default: "false" }, expectedType: "boolean", expectedValue: '"false"' },
+      { param: { name: "filters", type: "array", default: { a: 1 } }, expectedType: "array", expectedValue: '{"a":1}' },
+      { param: { name: "metadata", type: "object", default: ["a"] }, expectedType: "object", expectedValue: '["a"]' },
+    ];
+
+    for (const { param, expectedType, expectedValue } of configs) {
+      const config = { tools: [{ name: "t", url: "http://localhost", params: [param] }] };
+      const errors = validateConfig(config);
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0].includes("default value"));
+      assert.ok(errors[0].includes(`type "${expectedType}"`));
+      assert.ok(errors[0].includes(expectedValue));
+    }
+  });
+
   it("accepts enum values that match the declared param type", () => {
     const config = {
       tools: [{

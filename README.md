@@ -88,7 +88,7 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 | `type` | no | `string` | JSON Schema type (`string`, `number`, `integer`, `boolean`, `array`, or `object`) |
 | `enum` | no | | Non-empty list of allowed values. When `type` is set, every enum value must match it |
 | `required` | no | `false` | Whether the LLM must provide this |
-| `default` | no | | Value used when param is omitted. If `enum` is set, the default must be one of those values |
+| `default` | no | | Value used when param is omitted. It must match the effective param type, and if `enum` is set it must also be one of those values |
 
 ### How params map to requests
 

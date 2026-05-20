@@ -201,23 +201,27 @@ export function validateConfig(config) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} cannot have both "required: true" and a "default"`);
       }
       const hasValidParamType = param.type === undefined || VALID_PARAM_TYPES.has(param.type);
+      const effectiveParamType = param.type ?? "string";
       if (!hasValidParamType) {
         errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
+      }
+      const defaultMatchesType = param.default === undefined || !hasValidParamType || isValidParamValueForType(param.default, effectiveParamType);
+      if (!defaultMatchesType) {
+        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} default value ${JSON.stringify(param.default)} does not match declared type "${effectiveParamType}"`);
       }
       if (param.enum !== undefined) {
         if (!Array.isArray(param.enum) || param.enum.length === 0) {
           errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} "enum" must be a non-empty array`);
         } else {
           if (hasValidParamType) {
-            const effectiveType = param.type ?? "string";
             for (const value of param.enum) {
-              if (!isValidParamValueForType(value, effectiveType)) {
-                errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} enum value ${JSON.stringify(value)} does not match declared type "${effectiveType}"`);
+              if (!isValidParamValueForType(value, effectiveParamType)) {
+                errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} enum value ${JSON.stringify(value)} does not match declared type "${effectiveParamType}"`);
                 break;
               }
             }
           }
-          if (param.default !== undefined && !param.enum.some(value => isDeepStrictEqual(value, param.default))) {
+          if (defaultMatchesType && param.default !== undefined && !param.enum.some(value => isDeepStrictEqual(value, param.default))) {
             errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} default must be one of the enum values`);
           }
         }
