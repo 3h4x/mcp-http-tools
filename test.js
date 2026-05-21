@@ -740,10 +740,21 @@ describe("buildRequest GET", () => {
     assert.equal(new URL(url).searchParams.get("q"), "");
   });
 
-  it("substitutes empty string for missing path param arg", () => {
+  it("throws descriptive error when required standard path param is not provided", () => {
     const tc = {
       url: "http://localhost/api/{id}/details",
       params: [{ name: "id", required: true }],
+    };
+    assert.throws(
+      () => buildRequest(tc, {}),
+      /Required path parameter "id" was not provided/
+    );
+  });
+
+  it("substitutes empty string for missing optional path param arg", () => {
+    const tc = {
+      url: "http://localhost/api/{id}/details",
+      params: [{ name: "id" }],
     };
     const { url } = buildRequest(tc, {});
     assert.ok(url.includes("//details"), `expected empty segment, got: ${url}`);
@@ -3049,6 +3060,14 @@ describe("integration", () => {
     assert.equal(isError, true);
     assert.ok(text.includes("Required raw path parameter"));
     assert.ok(text.includes("path"));
+  });
+
+  it("callTool: missing required standard path param returns isError instead of throwing", async () => {
+    const toolConfig = { name: "t", url: "http://localhost/api/{id}", params: [{ name: "id", required: true }] };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.ok(text.includes("Required path parameter"));
+    assert.ok(text.includes("id"));
   });
 
   it("callTool: non-Error thrown value uses String(err) fallback", async () => {

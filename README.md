@@ -94,7 +94,7 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 
 - **GET**: params become URL query parameters
 - **POST**: params become keys in a JSON body
-- **URL placeholders**: `{param}` in the URL consumes the param value (not sent as query param or body key)
+- **URL placeholders**: `{param}` in the URL consumes the param value (not sent as query param or body key). If that param is `required: true`, omitting it fails the request instead of inserting an empty path segment.
 - **Raw path placeholders**: `{+path}` preserves `/` separators while still encoding each path segment
 - **Raw path safety**: `{+path}` rejects empty segments and `.` / `..` segments so callers cannot escape the configured URL prefix
 - **Raw path config contract**: params used by `{+path}` must be `required: true` or have a safe non-empty `default`

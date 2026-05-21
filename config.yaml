@@ -5,6 +5,9 @@
 # or contains invalid YAML.
 #
 # Each tool maps to one HTTP request. Define as many as you need.
+# Standard URL placeholders like {id} encode one path segment. If the
+# matching param is `required: true`, omitting it fails request building
+# instead of inserting an empty segment.
 # Raw path placeholders like {+path} preserve "/" separators, but each
 # segment must be non-empty and cannot be "." or "..". Params used by
 # {+path} must be required or provide a safe non-empty default.

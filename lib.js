@@ -336,17 +336,23 @@ export function buildRequest(toolConfig, args) {
   const resolvedUrl = substituteEnvVars(toolConfig.url).replace(URL_PLACEHOLDER_SUB_RE, (_, raw, name) => {
     usedInUrl.add(name);
     const param = paramsByName.get(name);
+    const hasArgValue = name in args && args[name] !== undefined;
+    const hasDefaultValue = param?.default !== undefined;
+
     let value;
-    if (name in args && args[name] !== undefined) {
+    if (hasArgValue) {
       value = args[name];
-    } else if (param?.default !== undefined) {
+    } else if (hasDefaultValue) {
       value = param.default;
     } else {
+      if (raw !== "+" && param?.required === true) {
+        throw new Error(`Required path parameter "${name}" was not provided`);
+      }
       value = "";
     }
 
     if (raw === "+") {
-      if (value === "" && param?.required === true) {
+      if (!hasArgValue && !hasDefaultValue && param?.required === true) {
         throw new Error(`Required raw path parameter "${name}" was not provided`);
       }
       return encodeRawPathParam(name, value);
