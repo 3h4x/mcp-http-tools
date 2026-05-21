@@ -722,6 +722,17 @@ describe("buildRequest GET", () => {
     delete process.env.__TEST_BASE__;
   });
 
+  it("substitutes ${ENV_VAR} in URL combined with {+path} raw path substitution", () => {
+    process.env.__TEST_BASE__ = "http://api.example.com";
+    const tc = {
+      url: "${__TEST_BASE__}/v1/{+path}",
+      params: [{ name: "path", required: true }],
+    };
+    const { url } = buildRequest(tc, { path: "users/alice reports" });
+    assert.equal(url, "http://api.example.com/v1/users/alice%20reports");
+    delete process.env.__TEST_BASE__;
+  });
+
   it("appends params to URL that already has a query string", () => {
     const tc = {
       url: "http://localhost/api?version=2&format=json",
@@ -1491,6 +1502,17 @@ describe("validateConfig", () => {
 
   it("accepts URL combining ${ENV_VAR} and {param} placeholders", () => {
     const config = { tools: [{ name: "t", url: "${API_BASE}/api/{id}", params: [{ name: "id" }] }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("accepts URL combining ${ENV_VAR} and {+path} placeholders", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "${API_BASE}/api/{+path}",
+        params: [{ name: "path", required: true }],
+      }],
+    };
     assert.deepEqual(validateConfig(config), []);
   });
 
@@ -2801,6 +2823,49 @@ describe("integration", () => {
       assert.equal(text, "ok");
       assert.equal(attempts, 3);
       assert.deepEqual(seenDelays.filter(ms => ms !== timeoutMs), [250, 500]);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it("callTool: returns final transient network error after retry exhaustion", async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timeoutMs = 9999;
+    const activeTimers = new Set();
+    let nextTimerId = 1;
+    let attempts = 0;
+
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      const timerId = nextTimerId++;
+      activeTimers.add(timerId);
+      if (ms !== timeoutMs) {
+        queueMicrotask(() => {
+          if (activeTimers.has(timerId)) callback(...args);
+        });
+      }
+      return timerId;
+    };
+    globalThis.clearTimeout = (timerId) => {
+      activeTimers.delete(timerId);
+    };
+    globalThis.fetch = async () => {
+      attempts++;
+      throw new TypeError("socket hang up");
+    };
+
+    try {
+      const toolConfig = {
+        name: "t",
+        url: "http://localhost/api",
+        timeout: timeoutMs,
+        retry: { count: 2, backoff_ms: 0 },
+      };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, true);
+      assert.equal(text, "Error: socket hang up");
+      assert.equal(attempts, 3, "initial attempt + 2 retries = 3 total");
     } finally {
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
