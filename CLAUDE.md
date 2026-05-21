@@ -44,7 +44,8 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 
 ## Commands
 
-Package manager: `pnpm` (prefer pnpm 11; this repo is currently pinned to `pnpm@10.33.0` and should be upgraded when convenient).
+Package manager: `pnpm 11`.
+Note: `package.json` is currently pinned to `pnpm@10.33.0`; upgrade it to pnpm 11 when convenient.
 
 ```bash
 pnpm test        # ~299 tests (count grows; run to verify)
@@ -104,7 +105,7 @@ pnpm start       # start MCP server (stdio)
 5. Never add packages with `postinstall` or `prepare` scripts without reviewing exactly what they execute.
 6. Prefer `pnpm` for install/update commands in both docs and local runs. Do not switch project instructions to `npm` while `packageManager` is pinned to `pnpm@10.33.0` and the repo lockfile is `pnpm-lock.yaml`. Note: consider upgrading to pnpm 11 when convenient.
 
-## Architecture Patterns
+## Architecture / Banned Patterns
 
 1. Keep `lib.js` as the single implementation module for config parsing, validation, request construction, and response extraction. If behavior changes, start there.
 2. Keep `index.js` focused on MCP wiring only: load config, validate once at startup, expose tool schemas, dispatch `callTool()`. Do not move business rules or request-shaping logic into the server entrypoint.
