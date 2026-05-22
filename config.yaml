@@ -20,7 +20,8 @@
 # also be one of the enum values.
 # JSON responses can also use `response.template:` with `{dot.path}`
 # placeholders for human-readable output. Missing placeholders are left
-# unchanged.
+# unchanged. `response:` must be an object when set, and unknown nested
+# keys are rejected at startup.
 
 tools: []
 

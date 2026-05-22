@@ -107,6 +107,7 @@ export function substituteEnvVars(str) {
 
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
+const VALID_RESPONSE_KEYS = new Set(["type", "path", "template"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const VALID_AUTH_KEYS = new Set(["bearer_env"]);
 const VALID_RETRY_KEYS = new Set(["count", "backoff_ms"]);
@@ -252,20 +253,31 @@ export function validateConfig(config) {
         }
       }
     }
-    if (tool.response?.type !== undefined && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
-      errors.push(`${ref}: invalid response.type "${tool.response.type}" — expected "text" or "json"`);
-    }
-    if (tool.response?.path !== undefined && (typeof tool.response.path !== "string" || tool.response.path.trim() === "")) {
-      errors.push(`${ref}: "response.path" must be a non-empty string`);
-    }
-    if (tool.response?.path !== undefined && (tool.response?.type ?? "text") !== "json") {
-      errors.push(`${ref}: "response.path" requires response.type "json"`);
-    }
-    if (tool.response?.template !== undefined && (typeof tool.response.template !== "string" || tool.response.template.trim() === "")) {
-      errors.push(`${ref}: "response.template" must be a non-empty string`);
-    }
-    if (tool.response?.template !== undefined && (tool.response?.type ?? "text") !== "json") {
-      errors.push(`${ref}: "response.template" requires response.type "json"`);
+    if (tool.response !== undefined && tool.response !== null) {
+      if (typeof tool.response !== "object" || Array.isArray(tool.response)) {
+        errors.push(`${ref}: "response" must be an object`);
+      } else {
+        for (const key of Object.keys(tool.response)) {
+          if (!VALID_RESPONSE_KEYS.has(key)) {
+            errors.push(`${ref}: response has unsupported field "${key}"`);
+          }
+        }
+        if (tool.response.type !== undefined && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
+          errors.push(`${ref}: invalid response.type "${tool.response.type}" — expected "text" or "json"`);
+        }
+        if (tool.response.path !== undefined && (typeof tool.response.path !== "string" || tool.response.path.trim() === "")) {
+          errors.push(`${ref}: "response.path" must be a non-empty string`);
+        }
+        if (tool.response.path !== undefined && (tool.response.type ?? "text") !== "json") {
+          errors.push(`${ref}: "response.path" requires response.type "json"`);
+        }
+        if (tool.response.template !== undefined && (typeof tool.response.template !== "string" || tool.response.template.trim() === "")) {
+          errors.push(`${ref}: "response.template" must be a non-empty string`);
+        }
+        if (tool.response.template !== undefined && (tool.response.type ?? "text") !== "json") {
+          errors.push(`${ref}: "response.template" requires response.type "json"`);
+        }
+      }
     }
     if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || !Number.isFinite(tool.timeout) || tool.timeout <= 0)) {
       errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);

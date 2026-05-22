@@ -911,6 +911,38 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("accepts response: null as omitted response config", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: null }] };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
+  it("reports non-object response config", () => {
+    const configs = [
+      { tools: [{ name: "t", url: "http://localhost", response: "json" }] },
+      { tools: [{ name: "t", url: "http://localhost", response: 42 }] },
+      { tools: [{ name: "t", url: "http://localhost", response: ["json"] }] },
+    ];
+    for (const config of configs) {
+      const errors = validateConfig(config);
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0].includes('"response"'));
+      assert.ok(errors[0].includes("object"));
+    }
+  });
+
+  it("reports unsupported response fields", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        response: { type: "json", format: "compact" },
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('unsupported field "format"'));
+  });
+
   it("reports non-positive timeout", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", timeout: 0 }] };
     const errors = validateConfig(config);

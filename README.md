@@ -102,6 +102,7 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 
 ### Response shaping
 
+- `response` must be an object when set. Unsupported keys are rejected at startup.
 - `response.type: text` passes the upstream body through unchanged.
 - `response.type: json` pretty-prints parsed JSON by default.
 - `response.path` extracts one dot-path from parsed JSON. Missing paths fall back to the raw upstream body.
