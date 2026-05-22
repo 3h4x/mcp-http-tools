@@ -916,6 +916,19 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("accepts headers/auth/retry set to null as omitted config blocks", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        headers: null,
+        auth: null,
+        retry: null,
+      }],
+    };
+    assert.deepEqual(validateConfig(config), []);
+  });
+
   it("reports non-object response config", () => {
     const configs = [
       { tools: [{ name: "t", url: "http://localhost", response: "json" }] },
@@ -1404,6 +1417,20 @@ describe("validateConfig", () => {
 
   it("reports whitespace-only response.template", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", template: "   " } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.template"));
+  });
+
+  it("reports error when response.template is null (bare YAML key)", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", template: null } }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes("response.template"));
+  });
+
+  it("reports error when response.template is a number", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", response: { type: "json", template: 42 } }] };
     const errors = validateConfig(config);
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes("response.template"));
@@ -1992,6 +2019,14 @@ describe("extractResponse", () => {
     assert.equal(
       extractResponse(raw, { type: "json", template: "Build: {build}" }),
       'Build: {"id":42,"status":"ok"}'
+    );
+  });
+
+  it("stringifies array values in response.template placeholders", () => {
+    const raw = JSON.stringify({ items: ["a", "b"] });
+    assert.equal(
+      extractResponse(raw, { type: "json", template: "Items: {items}" }),
+      'Items: ["a","b"]'
     );
   });
 
