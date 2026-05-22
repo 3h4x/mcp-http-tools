@@ -2,7 +2,7 @@
 
 Generic MCP-to-HTTP proxy. Define any HTTP API as an MCP tool via YAML config.
 
-## Architecture
+## Architecture / Banned Patterns
 
 ```
 YAML config → configToTools() → MCP tool schemas
