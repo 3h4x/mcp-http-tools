@@ -90,6 +90,8 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 | `required` | no | `false` | Whether the LLM must provide this |
 | `default` | no | | Value used when param is omitted. It must match the effective param type, and if `enum` is set it must also be one of those values |
 
+When a param entry is present, it must be an object using only the fields above. Unsupported param keys are rejected at startup.
+
 ### How params map to requests
 
 - **GET**: params become URL query parameters

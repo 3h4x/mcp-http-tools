@@ -108,6 +108,7 @@ export function substituteEnvVars(str) {
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 const VALID_RESPONSE_KEYS = new Set(["type", "path", "template"]);
+const VALID_PARAM_KEYS = new Set(["name", "description", "type", "enum", "required", "default"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const VALID_AUTH_KEYS = new Set(["bearer_env"]);
 const VALID_RETRY_KEYS = new Set(["count", "backoff_ms"]);
@@ -188,6 +189,11 @@ export function validateConfig(config) {
       if (param == null || typeof param !== "object" || Array.isArray(param)) {
         errors.push(`${ref}: params[${j}] must be an object`);
         continue;
+      }
+      for (const key of Object.keys(param)) {
+        if (!VALID_PARAM_KEYS.has(key)) {
+          errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has unsupported field "${key}"`);
+        }
       }
       if (!param.name) {
         errors.push(`${ref}: params[${j}] missing required field "name"`);

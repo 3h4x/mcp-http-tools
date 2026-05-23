@@ -879,6 +879,20 @@ describe("validateConfig", () => {
     assert.ok(errors[0].includes('"name"'));
   });
 
+  it("reports unsupported param fields", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "q", format: "csv" }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('params[0] ("q")'));
+    assert.ok(errors[0].includes('unsupported field "format"'));
+  });
+
   it("accepts params that all have names", () => {
     const config = { tools: [{ name: "t", url: "http://localhost", params: [{ name: "q" }] }] };
     assert.deepEqual(validateConfig(config), []);
@@ -1611,6 +1625,14 @@ describe("validateConfig", () => {
     const errors = validateConfig(config);
     const err = errors.find(e => e.includes("invalid type"));
     assert.ok(err, "expected an invalid type error");
+    assert.ok(err.includes("params[0]") && !err.includes('params[0] ("'), "param name should not appear in error when unnamed");
+  });
+
+  it("reports unsupported field when unnamed param has an extra key", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", params: [{ type: "string", format: "csv" }] }] };
+    const errors = validateConfig(config);
+    const err = errors.find(e => e.includes('unsupported field "format"'));
+    assert.ok(err, "expected an unsupported-field error");
     assert.ok(err.includes("params[0]") && !err.includes('params[0] ("'), "param name should not appear in error when unnamed");
   });
 
