@@ -239,6 +239,24 @@ describe("configToTools", () => {
     assert.equal(tool.inputSchema.properties.limit.default, 50);
   });
 
+  it("preserves falsy defaults in property schema", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [
+          { name: "verbose", type: "boolean", default: false },
+          { name: "offset", type: "integer", default: 0 },
+          { name: "query", default: "" },
+        ],
+      }],
+    };
+    const [tool] = configToTools(config);
+    assert.equal(tool.inputSchema.properties.verbose.default, false);
+    assert.equal(tool.inputSchema.properties.offset.default, 0);
+    assert.equal(tool.inputSchema.properties.query.default, "");
+  });
+
   it("keeps required raw path params required in the generated schema", () => {
     const config = {
       tools: [{
@@ -1333,6 +1351,19 @@ describe("validateConfig", () => {
     }
   });
 
+  it("reports null enum values from bare YAML keys", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [{ name: "format", enum: null }],
+      }],
+    };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('"enum"'));
+  });
+
   it("reports enum values that do not match the declared param type", () => {
     const config = {
       tools: [{
@@ -1383,6 +1414,20 @@ describe("validateConfig", () => {
     assert.equal(errors.length, 1);
     assert.ok(errors[0].includes("default"));
     assert.ok(errors[0].includes("enum"));
+  });
+
+  it("accepts structured defaults that match enum values by deep equality", () => {
+    const config = {
+      tools: [{
+        name: "t",
+        url: "http://localhost",
+        params: [
+          { name: "filters", type: "array", enum: [["a"], ["a", "b"]], default: ["a", "b"] },
+          { name: "metadata", type: "object", enum: [{ scope: "team" }, { scope: "global" }], default: { scope: "global" } },
+        ],
+      }],
+    };
+    assert.deepEqual(validateConfig(config), []);
   });
 
   it("reports duplicate param names within a tool", () => {
