@@ -835,6 +835,22 @@ describe("validateConfig", () => {
     assert.deepEqual(validateConfig(config), []);
   });
 
+  it("reports unsupported top-level tool fields", () => {
+    const config = { tools: [{ name: "t", url: "http://localhost", cache: true }] };
+    const errors = validateConfig(config);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].includes('tools[0] ("t")'));
+    assert.ok(errors[0].includes('unsupported field "cache"'));
+  });
+
+  it("reports unsupported top-level tool field when tool is unnamed", () => {
+    const config = { tools: [{ url: "http://localhost", cache: true }] };
+    const errors = validateConfig(config);
+    const err = errors.find(error => error.includes('unsupported field "cache"'));
+    assert.ok(err);
+    assert.ok(err.includes("tools[0]"));
+  });
+
   it("accepts all valid HTTP methods case-insensitively", () => {
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "get", "post"]) {
       const config = { tools: [{ name: "t", url: "http://localhost", method }] };

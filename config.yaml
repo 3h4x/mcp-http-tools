@@ -17,8 +17,8 @@
 # Params can declare `enum:` choices. Enum values must be a non-empty list,
 # and both enum values and any `default` must match the effective param type
 # (`string` when `type` is omitted). When `enum` is set, the `default` must
-# also be one of the enum values. Param entries accept only the documented
-# keys and unknown param fields are rejected at startup.
+# also be one of the enum values. Tool entries and param entries accept only
+# the documented keys; unknown tool or param fields are rejected at startup.
 # JSON responses can also use `response.template:` with `{dot.path}`
 # placeholders for human-readable output. Missing placeholders are left
 # unchanged. `response:` must be an object when set, and unknown nested

@@ -62,8 +62,11 @@ Each tool supports:
 | `response.type` | no | `text` | `text` (raw) or `json` (parsed) |
 | `response.path` | no | | Dot-path to extract from JSON (e.g. `data.result`) |
 | `response.template` | no | | JSON-only output template using `{dot.path}` placeholders (e.g. `Status: {status}`) |
+| `timeout` | no | `30000` | Request timeout in milliseconds |
 | `retry.count` | no | `2` when `retry` is set | Number of retry attempts after the first request. Retries are disabled unless a `retry` object is present |
 | `retry.backoff_ms` | no | `250` when `retry` is set | Initial exponential backoff delay in milliseconds. The delay doubles after each failed attempt |
+
+When a tool entry is present, it must be an object using only the documented fields above. Unsupported top-level tool keys are rejected at startup.
 
 ### Retry
 
