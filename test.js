@@ -2805,6 +2805,139 @@ describe("integration", () => {
     assert.ok(text.includes("ECONNREFUSED"));
   });
 
+  it("callTool: mocked fetch does not retry non-transient HTTP status", async () => {
+    let attempts = 0;
+    globalThis.fetch = async () => {
+      attempts++;
+      return {
+        ok: false,
+        status: 404,
+        text: async () => "not found",
+      };
+    };
+
+    const toolConfig = {
+      name: "t",
+      url: "http://localhost/api",
+      retry: { count: 2, backoff_ms: 0 },
+    };
+    const { text, isError } = await callTool(toolConfig, {});
+    assert.equal(isError, true);
+    assert.equal(text, "HTTP 404: not found");
+    assert.equal(attempts, 1);
+  });
+
+  it("callTool: mocked fetch retries transient HTTP status with exponential backoff", async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timeoutMs = 9999;
+    const seenDelays = [];
+    const activeTimers = new Set();
+    let nextTimerId = 1;
+    let attempts = 0;
+
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      const timerId = nextTimerId++;
+      activeTimers.add(timerId);
+      seenDelays.push(ms);
+      if (ms !== timeoutMs) {
+        queueMicrotask(() => {
+          if (activeTimers.has(timerId)) callback(...args);
+        });
+      }
+      return timerId;
+    };
+    globalThis.clearTimeout = (timerId) => {
+      activeTimers.delete(timerId);
+    };
+    globalThis.fetch = async () => {
+      attempts++;
+      if (attempts < 3) {
+        return {
+          ok: false,
+          status: 429,
+          text: async () => `rate limited ${attempts}`,
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ data: { ok: true } }),
+      };
+    };
+
+    try {
+      const toolConfig = {
+        name: "t",
+        url: "http://localhost/api",
+        timeout: timeoutMs,
+        retry: { count: 2, backoff_ms: 25 },
+        response: { type: "json", path: "data.ok" },
+      };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, undefined);
+      assert.equal(text, "true");
+      assert.equal(attempts, 3);
+      assert.deepEqual(seenDelays.filter(ms => ms !== timeoutMs), [25, 50]);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it("callTool: mocked fetch retries AbortError and recovers", async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timeoutMs = 9999;
+    const seenDelays = [];
+    const activeTimers = new Set();
+    let nextTimerId = 1;
+    let attempts = 0;
+
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      const timerId = nextTimerId++;
+      activeTimers.add(timerId);
+      seenDelays.push(ms);
+      if (ms !== timeoutMs) {
+        queueMicrotask(() => {
+          if (activeTimers.has(timerId)) callback(...args);
+        });
+      }
+      return timerId;
+    };
+    globalThis.clearTimeout = (timerId) => {
+      activeTimers.delete(timerId);
+    };
+    globalThis.fetch = async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "ok",
+      };
+    };
+
+    try {
+      const toolConfig = {
+        name: "t",
+        url: "http://localhost/api",
+        timeout: timeoutMs,
+        retry: { count: 1, backoff_ms: 10 },
+      };
+      const { text, isError } = await callTool(toolConfig, {});
+      assert.equal(isError, undefined);
+      assert.equal(text, "ok");
+      assert.equal(attempts, 2);
+      assert.deepEqual(seenDelays.filter(ms => ms !== timeoutMs), [10]);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
   it("callTool: does not retry transient HTTP status without retry config", async () => {
     globalThis.fetch = realFetch;
     let requests = 0;
