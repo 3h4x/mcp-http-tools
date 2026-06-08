@@ -1,8 +1,11 @@
 {
-  "name": "mcp-http-tools",
+  "name": "@3h4x/mcp-http-tools",
   "version": "2.0.0",
   "description": "Generic MCP-to-HTTP proxy — define tools via YAML config",
   "type": "module",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
     "overrides": {

@@ -6,8 +6,25 @@ Define your tools in a YAML file — each one maps to an HTTP request. The MCP s
 
 ## Quick start
 
+### From source
+
 ```bash
 pnpm install
+```
+
+### From GitHub Packages
+
+Releases are published to [GitHub Packages](https://docs.github.com/en/packages) as `@3h4x/mcp-http-tools`. To install, tell your package manager to fetch the `@3h4x` scope from GitHub's registry by adding an `.npmrc`:
+
+```
+@3h4x:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+`GITHUB_TOKEN` must be a [personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) with the `read:packages` scope. Then:
+
+```bash
+pnpm add @3h4x/mcp-http-tools
 ```
 
 Create `~/.config/mcp-http-tools/config.yaml`:

@@ -131,4 +131,4 @@ pnpm start       # start MCP server (stdio)
 - **Response transforms** — beyond dot-path: templates or formatters for human-readable output
 - **Config merging** — load both global and local, merge tools arrays (shared + project-specific)
 - **Hot reload** — watch config file, reload tools without restart
-- **Publish to npm**
+- **Publish to npm** — currently auto-published to GitHub Packages (`@3h4x/mcp-http-tools` on `npm.pkg.github.com`) via semantic-release on push to `main`; switch/add the public npm registry later if desired
