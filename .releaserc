@@ -21,8 +21,7 @@
       "npmPublish": true
     }],
     ["@semantic-release/github", {
-      "failComment": false,
-      "failTitle": false
+      "failCommentCondition": "<% return false; %>"
     }]
   ]
 }
