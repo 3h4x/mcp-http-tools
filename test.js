@@ -1,10 +1,12 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool, verifyBearerToken } from "./lib.js";
 
 const realFetch = globalThis.fetch;
@@ -2529,7 +2531,7 @@ describe("integration", () => {
       text: async () => typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody),
     });
   }
-  afterEach(() => { delete globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = realFetch; });
 
   it("full flow: config → tool schema → request → response extraction", async () => {
     const config = {
@@ -3698,5 +3700,69 @@ describe("integration", () => {
     const { text, isError } = await callTool(toolConfig, { name: "dup" });
     assert.equal(isError, true);
     assert.ok(text.startsWith("HTTP 409:"));
+  });
+});
+
+// ── HTTP transport (--http) ──────────────────────────────────────────────
+
+describe("HTTP transport (--http)", () => {
+  it("exits non-zero when --http is used without MCP_HTTP_TOKEN", () => {
+    const { MCP_HTTP_TOKEN, ...envWithoutToken } = process.env;
+    const result = spawnSync(process.execPath, ["index.js", "--http"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: envWithoutToken,
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /MCP_HTTP_TOKEN must be set to use --http/);
+  });
+
+  it("rejects requests without a valid bearer token and serves tools/list with one", async () => {
+    const dir = join(tmpdir(), `mcp-test-http-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const configPath = join(dir, "config.yaml");
+    writeFileSync(
+      configPath,
+      "tools:\n  - name: ping\n    url: http://127.0.0.1:1/unused\n    response:\n      type: text\n"
+    );
+
+    const port = 39281;
+    const token = "test-token-abc123";
+    const child = spawn(process.execPath, ["index.js", "--http", "--config", configPath], {
+      cwd: process.cwd(),
+      env: { ...process.env, MCP_HTTP_TOKEN: token, MCP_HTTP_PORT: String(port) },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+
+    try {
+      const deadline = Date.now() + 5000;
+      while (!stderr.includes("HTTP transport listening")) {
+        if (Date.now() > deadline) throw new Error(`server did not start in time; stderr so far: ${stderr}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      const unauthorized = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      });
+      assert.equal(unauthorized.status, 401);
+
+      const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const client = new Client({ name: "test-client", version: "1.0.0" });
+      await client.connect(transport);
+      const { tools } = await client.listTools();
+      assert.equal(tools.length, 1);
+      assert.equal(tools[0].name, "ping");
+      await client.close();
+    } finally {
+      child.kill();
+      await new Promise((resolve) => child.once("exit", resolve));
+      rmSync(dir, { recursive: true });
+    }
   });
 });

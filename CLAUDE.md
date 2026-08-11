@@ -11,8 +11,10 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
                                    └─► extractResponse() → MCP response
 ```
 
+`index.js` supports two transports: stdio (default) and `--http` (Streamable HTTP, bearer-token gated via `verifyBearerToken`). Both share the same `Server`/tool-dispatch wiring above — only the final transport selection differs.
+
 - `lib.js` — all logic: config loading, schema generation, request building, response extraction
-- `index.js` — thin MCP server wiring (~45 lines), no domain logic
+- `index.js` — thin MCP server wiring (~85 lines, covering both transports), no domain logic
 - `config.yaml` — example template (committed), real config at `~/.config/mcp-http-tools/config.yaml`
 
 ## Key functions (lib.js)
@@ -26,6 +28,7 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 | `callTool(toolConfig, args)` | End-to-end tool invocation: build → fetch (w/ timeout) → extract. Returns `{ text, isError? }` |
 | `extractResponse(raw, responseConfig)` | Formats response (text passthrough or JSON path extraction) |
 | `resolvePath(obj, path)` | Dot-notation object traversal |
+| `verifyBearerToken(authHeader, expectedToken)` | Constant-time bearer-token check used by the `--http` transport |
 | `substituteEnvVars(str)` | `${VAR}` → `process.env.VAR` replacement |
 
 ## Config features
@@ -74,7 +77,7 @@ pnpm start       # start MCP server (stdio)
 - **No linter/formatter configured** — match the style of existing code (2-space indent, single quotes, semicolons).
 - **Error handling**: `callTool()` never throws — it returns `{ text, isError: true }` on failure. Keep that contract. Other exported functions throw on programmer errors and return values on data errors.
 - **Async**: `async/await` only. No callbacks or raw Promises with `.then()`.
-- **All domain logic lives in `lib.js`**. `index.js` is a thin MCP server wire-up (~45 lines) — keep it that way. No new source files unless there is a strong reason.
+- **All domain logic lives in `lib.js`**. `index.js` is a thin MCP server wire-up (~85 lines, stdio + `--http`) — keep it that way. No new source files unless there is a strong reason.
 1. Use modern Node built-ins already relied on by the repo (`fetch`, `AbortController`, `URL`, top-level `await`, `import.meta.url`). Do not add compatibility shims or polyfills.
 2. Keep imports grouped and explicit: Node built-ins first using the `node:` prefix, then third-party packages, then local relative imports with the `.js` extension required by ESM.
 3. Follow existing naming patterns: exported helpers in `lib.js` use camelCase verbs (`loadConfig`, `buildRequest`), internal constants use `UPPER_SNAKE_CASE`, and tool/config field names stay aligned with YAML keys (`response.path`, `timeout`, `params`).

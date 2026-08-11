@@ -63,6 +63,18 @@ node index.js --config /path/to/config.yaml
 
 If the explicit config file is missing or invalid YAML, startup fails instead of falling back to an empty tool list.
 
+## HTTP transport
+
+By default the server speaks MCP over stdio. Pass `--http` to serve it over the network instead, using MCP's Streamable HTTP transport — the same mechanism `claude mcp add --transport http <url>` targets.
+
+```bash
+MCP_HTTP_TOKEN=some-long-random-token MCP_HTTP_PORT=3000 node index.js --http --config /path/to/config.yaml
+```
+
+- Listens on `127.0.0.1:<MCP_HTTP_PORT>` (default `3000`), serving the MCP endpoint at `/mcp`. Put a reverse proxy in front for TLS and public exposure — this mode does not bind to a public interface itself.
+- `MCP_HTTP_TOKEN` is required when `--http` is passed; startup fails otherwise. Every request must send `Authorization: Bearer <MCP_HTTP_TOKEN>` or it gets a `401`.
+- Stateless mode: no session is kept between requests.
+
 ## Config reference
 
 Each tool supports:
