@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool } from "./lib.js";
+import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool, verifyBearerToken } from "./lib.js";
 
 const realFetch = globalThis.fetch;
 
@@ -119,6 +119,44 @@ describe("substituteEnvVars", () => {
 
   it("coerces non-string input to string before substitution", () => {
     assert.equal(substituteEnvVars(123), "123");
+  });
+});
+
+// ── verifyBearerToken ─────────────────────────────────────────────────────
+
+describe("verifyBearerToken", () => {
+  it("accepts a matching bearer token", () => {
+    assert.equal(verifyBearerToken("Bearer secret123", "secret123"), true);
+  });
+
+  it("rejects a mismatched token", () => {
+    assert.equal(verifyBearerToken("Bearer wrong", "secret123"), false);
+  });
+
+  it("rejects a missing Authorization header", () => {
+    assert.equal(verifyBearerToken(undefined, "secret123"), false);
+  });
+
+  it("rejects a header without the Bearer prefix", () => {
+    assert.equal(verifyBearerToken("secret123", "secret123"), false);
+  });
+
+  it("rejects when expectedToken is unset", () => {
+    assert.equal(verifyBearerToken("Bearer secret123", undefined), false);
+  });
+
+  it("rejects when expectedToken is an empty string", () => {
+    assert.equal(verifyBearerToken("Bearer ", ""), false);
+  });
+
+  it("rejects a token of different length without throwing", () => {
+    assert.doesNotThrow(() => {
+      assert.equal(verifyBearerToken("Bearer short", "a-much-longer-expected-token"), false);
+    });
+  });
+
+  it("is case-sensitive on the token value", () => {
+    assert.equal(verifyBearerToken("Bearer Secret123", "secret123"), false);
   });
 });
 

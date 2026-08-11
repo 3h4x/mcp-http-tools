@@ -3,6 +3,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
+import { timingSafeEqual } from "node:crypto";
 import yaml from "js-yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -103,6 +104,18 @@ export function substituteEnvVars(str) {
     }
     return process.env[name];
   });
+}
+
+export function verifyBearerToken(authHeader, expectedToken) {
+  if (!expectedToken) return false;
+  if (typeof authHeader !== "string") return false;
+  const prefix = "Bearer ";
+  if (!authHeader.startsWith(prefix)) return false;
+  const provided = authHeader.slice(prefix.length);
+  const providedBuf = Buffer.from(provided);
+  const expectedBuf = Buffer.from(expectedToken);
+  if (providedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(providedBuf, expectedBuf);
 }
 
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
