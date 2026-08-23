@@ -145,6 +145,48 @@ When a param entry is present, it must be an object using only the fields above.
 
 See [docs/raw-path-placeholders.md](docs/raw-path-placeholders.md) for the exact `{+path}` contract.
 
+### Composite tools
+
+A `requests` array turns a tool into a fan-out: it makes every request in the array **in parallel** and returns one merged JSON object, keyed by each request's `key`. Use it for "give me the whole picture" tools -- e.g. a project overview that pulls k8s state, logs, metrics, and error data in a single call instead of five round-trips.
+
+- A tool has either `url` (a single request) or `requests` (a composite) -- never both.
+- `requests` must be a non-empty array. Each entry needs a unique `key` plus its own `url`/`method`/`headers`/`params`/`response`/`timeout`/`retry` -- exactly the same fields a regular tool would use, just nested one level down.
+- The composite tool's own top-level `params` build the MCP `inputSchema` callers see (same as any tool). Each request re-declares the params it actually needs in its own `url`/query string -- there's no implicit inheritance, so a request only sees the args it explicitly lists.
+- One request failing (timeout, non-2xx, network error) does **not** fail the others. Its key gets `{ "error": "..." }` in the merged result instead -- partial data beats an all-or-nothing failure for an overview tool.
+- Each request's own `response` shaping still applies before merging; a `response.type: json` result is embedded as a real nested object, not a JSON string.
+
+```yaml
+tools:
+  - name: project_overview
+    description: Pods, recent logs, and error count for one project, in one call
+    params:
+      - name: namespace
+        required: true
+    requests:
+      - key: pods
+        url: https://127.0.0.1:6443/api/v1/namespaces/{namespace}/pods
+        params:
+          - { name: namespace, required: true }
+        headers:
+          Authorization: "Bearer ${K3S_API_TOKEN}"
+        response: { type: json }
+      - key: recent_errors
+        url: https://errors.example.com/api/projects/{namespace}/issues/
+        params:
+          - { name: namespace, required: true }
+        auth: { bearer_env: GLITCHTIP_TOKEN }
+        response: { type: json, path: results }
+```
+
+Calling `project_overview` with `{ "namespace": "bonker" }` returns:
+
+```json
+{
+  "pods": { "kind": "PodList", "items": [ ... ] },
+  "recent_errors": [ { "title": "...", "count": 3 }, ... ]
+}
+```
+
 ## Examples
 
 ### GET with query params

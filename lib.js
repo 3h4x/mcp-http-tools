@@ -121,7 +121,9 @@ export function verifyBearerToken(authHeader, expectedToken) {
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 const VALID_RESPONSE_KEYS = new Set(["type", "path", "template"]);
-const VALID_TOOL_KEYS = new Set(["name", "description", "url", "method", "headers", "params", "response", "timeout", "auth", "retry"]);
+const VALID_TOOL_KEYS = new Set(["name", "description", "url", "method", "headers", "params", "response", "timeout", "auth", "retry", "requests"]);
+const VALID_REQUEST_KEYS = new Set(["key", "url", "method", "headers", "params", "response", "timeout", "auth", "retry"]);
+const REQUEST_ONLY_TOOL_KEYS = ["url", "method", "headers", "response", "timeout", "auth", "retry"];
 const VALID_PARAM_KEYS = new Set(["name", "description", "type", "enum", "required", "default"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const VALID_AUTH_KEYS = new Set(["bearer_env"]);
@@ -132,6 +134,175 @@ const INVALID_RAW_PATH_SEGMENTS = new Set(["", ".", ".."]);
 const URL_PLACEHOLDER_RE = /(?<!\$)\{(\+?[\w-]+)\}/g;
 const URL_PLACEHOLDER_SUB_RE = /\{(\+?)([\w-]+)\}/g;
 const RESPONSE_TEMPLATE_PLACEHOLDER_RE = /\{([\w.-]+)\}/g;
+
+// Validates the "how to make this one HTTP call" fields -- url, method,
+// params, headers, auth, response, timeout, retry -- shared by both a
+// regular tool and each entry in a composite tool's `requests` array.
+// Pushes onto `errors` directly rather than returning a new array, so
+// callers don't need to spread/concat at every call site.
+function validateRequestShape(obj, ref, errors) {
+  if (!obj.url) {
+    errors.push(`${ref}: missing required field "url"`);
+  } else {
+    if (typeof obj.url !== "string") {
+      errors.push(`${ref}: "url" must be a string`);
+    } else if (!obj.url.includes("${")) {
+      try {
+        new URL(obj.url.replace(/\{[^}]+\}/g, "x"));
+      } catch {
+        errors.push(`${ref}: "url" is not a valid URL`);
+      }
+    }
+    if (typeof obj.url === "string") {
+      const paramsByName = new Map((Array.isArray(obj.params) ? obj.params : []).map(p => [p?.name, p]));
+      const paramNames = new Set(paramsByName.keys());
+      for (const [, ph] of obj.url.matchAll(URL_PLACEHOLDER_RE)) {
+        const paramName = ph.startsWith("+") ? ph.slice(1) : ph;
+        if (!paramNames.has(paramName)) {
+          errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
+          continue;
+        }
+        if (ph.startsWith("+")) {
+          const param = paramsByName.get(paramName);
+          const hasSafeDefault = param?.default !== undefined && isSafeRawPathValue(param.default);
+          if (param?.required !== true && !hasSafeDefault) {
+            errors.push(`${ref}: raw path placeholder "{${ph}}" requires params["${paramName}"] to be required or have a non-empty default without "." or ".." segments`);
+          }
+        }
+      }
+    }
+  }
+  if (obj.method !== undefined) {
+    const method = typeof obj.method === "string" ? obj.method.toUpperCase() : "";
+    if (!VALID_METHODS.has(method)) {
+      errors.push(`${ref}: invalid method "${obj.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
+    }
+  }
+  if (obj.params != null && !Array.isArray(obj.params)) {
+    errors.push(`${ref}: "params" must be an array`);
+  }
+  const seenParams = new Set();
+  for (const [j, param] of (Array.isArray(obj.params) ? obj.params : []).entries()) {
+    if (param == null || typeof param !== "object" || Array.isArray(param)) {
+      errors.push(`${ref}: params[${j}] must be an object`);
+      continue;
+    }
+    for (const key of Object.keys(param)) {
+      if (!VALID_PARAM_KEYS.has(key)) {
+        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has unsupported field "${key}"`);
+      }
+    }
+    if (!param.name) {
+      errors.push(`${ref}: params[${j}] missing required field "name"`);
+    } else {
+      if (seenParams.has(param.name)) {
+        errors.push(`${ref}: params[${j}] duplicate param name "${param.name}"`);
+      } else {
+        seenParams.add(param.name);
+      }
+    }
+    if (param.required === true && param.default !== undefined) {
+      errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} cannot have both "required: true" and a "default"`);
+    }
+    const hasValidParamType = param.type === undefined || VALID_PARAM_TYPES.has(param.type);
+    const effectiveParamType = param.type ?? "string";
+    if (!hasValidParamType) {
+      errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
+    }
+    const defaultMatchesType = param.default === undefined || !hasValidParamType || isValidParamValueForType(param.default, effectiveParamType);
+    if (!defaultMatchesType) {
+      errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} default value ${JSON.stringify(param.default)} does not match declared type "${effectiveParamType}"`);
+    }
+    if (param.enum !== undefined) {
+      if (!Array.isArray(param.enum) || param.enum.length === 0) {
+        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} "enum" must be a non-empty array`);
+      } else {
+        if (hasValidParamType) {
+          for (const value of param.enum) {
+            if (!isValidParamValueForType(value, effectiveParamType)) {
+              errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} enum value ${JSON.stringify(value)} does not match declared type "${effectiveParamType}"`);
+              break;
+            }
+          }
+        }
+        if (defaultMatchesType && param.default !== undefined && !param.enum.some(value => isDeepStrictEqual(value, param.default))) {
+          errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} default must be one of the enum values`);
+        }
+      }
+    }
+  }
+  if (obj.headers !== undefined && obj.headers !== null) {
+    if (typeof obj.headers !== "object" || Array.isArray(obj.headers)) {
+      errors.push(`${ref}: "headers" must be an object`);
+    } else {
+      for (const [k, v] of Object.entries(obj.headers)) {
+        if (typeof v !== "string" && typeof v !== "number") {
+          errors.push(`${ref}: headers["${k}"] must be a string or number`);
+        }
+      }
+    }
+  }
+  if (obj.auth !== undefined && obj.auth !== null) {
+    if (typeof obj.auth !== "object" || Array.isArray(obj.auth)) {
+      errors.push(`${ref}: "auth" must be an object`);
+    } else {
+      for (const key of Object.keys(obj.auth)) {
+        if (!VALID_AUTH_KEYS.has(key)) {
+          errors.push(`${ref}: auth has unsupported field "${key}"`);
+        }
+      }
+      if (obj.auth.bearer_env !== undefined && !isValidEnvVarName(obj.auth.bearer_env)) {
+        errors.push(`${ref}: "auth.bearer_env" must be an environment variable name containing only letters, digits, and underscores`);
+      }
+    }
+  }
+  if (obj.response !== undefined && obj.response !== null) {
+    if (typeof obj.response !== "object" || Array.isArray(obj.response)) {
+      errors.push(`${ref}: "response" must be an object`);
+    } else {
+      for (const key of Object.keys(obj.response)) {
+        if (!VALID_RESPONSE_KEYS.has(key)) {
+          errors.push(`${ref}: response has unsupported field "${key}"`);
+        }
+      }
+      if (obj.response.type !== undefined && !VALID_RESPONSE_TYPES.has(obj.response.type)) {
+        errors.push(`${ref}: invalid response.type "${obj.response.type}" — expected "text" or "json"`);
+      }
+      if (obj.response.path !== undefined && (typeof obj.response.path !== "string" || obj.response.path.trim() === "")) {
+        errors.push(`${ref}: "response.path" must be a non-empty string`);
+      }
+      if (obj.response.path !== undefined && (obj.response.type ?? "text") !== "json") {
+        errors.push(`${ref}: "response.path" requires response.type "json"`);
+      }
+      if (obj.response.template !== undefined && (typeof obj.response.template !== "string" || obj.response.template.trim() === "")) {
+        errors.push(`${ref}: "response.template" must be a non-empty string`);
+      }
+      if (obj.response.template !== undefined && (obj.response.type ?? "text") !== "json") {
+        errors.push(`${ref}: "response.template" requires response.type "json"`);
+      }
+    }
+  }
+  if (obj.timeout !== undefined && (typeof obj.timeout !== "number" || !Number.isFinite(obj.timeout) || obj.timeout <= 0)) {
+    errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);
+  }
+  if (obj.retry !== undefined && obj.retry !== null) {
+    if (typeof obj.retry !== "object" || Array.isArray(obj.retry)) {
+      errors.push(`${ref}: "retry" must be an object`);
+    } else {
+      for (const key of Object.keys(obj.retry)) {
+        if (!VALID_RETRY_KEYS.has(key)) {
+          errors.push(`${ref}: retry has unsupported field "${key}"`);
+        }
+      }
+      if (obj.retry.count !== undefined && (!Number.isInteger(obj.retry.count) || obj.retry.count < 0)) {
+        errors.push(`${ref}: "retry.count" must be a non-negative integer`);
+      }
+      if (obj.retry.backoff_ms !== undefined && (typeof obj.retry.backoff_ms !== "number" || !Number.isFinite(obj.retry.backoff_ms) || obj.retry.backoff_ms < 0)) {
+        errors.push(`${ref}: "retry.backoff_ms" must be a non-negative number (milliseconds)`);
+      }
+    }
+  }
+}
 
 export function validateConfig(config) {
   const errors = [];
@@ -163,166 +334,42 @@ export function validateConfig(config) {
         seenNames.add(tool.name);
       }
     }
-    if (!tool.url) {
-      errors.push(`${ref}: missing required field "url"`);
-    } else {
-      if (typeof tool.url !== "string") {
-        errors.push(`${ref}: "url" must be a string`);
-      } else if (!tool.url.includes("${")) {
-        try {
-          new URL(tool.url.replace(/\{[^}]+\}/g, "x"));
-        } catch {
-          errors.push(`${ref}: "url" is not a valid URL`);
+    const isComposite = tool.requests !== undefined;
+    if (isComposite) {
+      for (const field of REQUEST_ONLY_TOOL_KEYS) {
+        if (tool[field] !== undefined) {
+          errors.push(`${ref}: "${field}" is not valid alongside "requests" -- each request in the array declares its own ${field}`);
         }
       }
-      if (typeof tool.url === "string") {
-        const paramsByName = new Map((Array.isArray(tool.params) ? tool.params : []).map(p => [p?.name, p]));
-        const paramNames = new Set(paramsByName.keys());
-        for (const [, ph] of tool.url.matchAll(URL_PLACEHOLDER_RE)) {
-          const paramName = ph.startsWith("+") ? ph.slice(1) : ph;
-          if (!paramNames.has(paramName)) {
-            errors.push(`${ref}: URL placeholder "{${ph}}" has no matching param definition`);
+      if (!Array.isArray(tool.requests) || tool.requests.length === 0) {
+        errors.push(`${ref}: "requests" must be a non-empty array`);
+      } else {
+        const seenKeys = new Set();
+        for (const [k, reqItem] of tool.requests.entries()) {
+          const rref = `${ref}.requests[${k}]${reqItem?.key ? ` ("${reqItem.key}")` : ""}`;
+          if (reqItem == null || typeof reqItem !== "object" || Array.isArray(reqItem)) {
+            errors.push(`${rref}: entry must be an object`);
             continue;
           }
-          if (ph.startsWith("+")) {
-            const param = paramsByName.get(paramName);
-            const hasSafeDefault = param?.default !== undefined && isSafeRawPathValue(param.default);
-            if (param?.required !== true && !hasSafeDefault) {
-              errors.push(`${ref}: raw path placeholder "{${ph}}" requires params["${paramName}"] to be required or have a non-empty default without "." or ".." segments`);
+          for (const key of Object.keys(reqItem)) {
+            if (!VALID_REQUEST_KEYS.has(key)) {
+              errors.push(`${rref}: has unsupported field "${key}"`);
             }
           }
-        }
-      }
-    }
-    if (tool.method !== undefined) {
-      const method = typeof tool.method === "string" ? tool.method.toUpperCase() : "";
-      if (!VALID_METHODS.has(method)) {
-        errors.push(`${ref}: invalid method "${tool.method}" — expected one of: GET, POST, PUT, PATCH, DELETE`);
-      }
-    }
-    if (tool.params != null && !Array.isArray(tool.params)) {
-      errors.push(`${ref}: "params" must be an array`);
-    }
-    const seenParams = new Set();
-    for (const [j, param] of (Array.isArray(tool.params) ? tool.params : []).entries()) {
-      if (param == null || typeof param !== "object" || Array.isArray(param)) {
-        errors.push(`${ref}: params[${j}] must be an object`);
-        continue;
-      }
-      for (const key of Object.keys(param)) {
-        if (!VALID_PARAM_KEYS.has(key)) {
-          errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has unsupported field "${key}"`);
-        }
-      }
-      if (!param.name) {
-        errors.push(`${ref}: params[${j}] missing required field "name"`);
-      } else {
-        if (seenParams.has(param.name)) {
-          errors.push(`${ref}: params[${j}] duplicate param name "${param.name}"`);
-        } else {
-          seenParams.add(param.name);
-        }
-      }
-      if (param.required === true && param.default !== undefined) {
-        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} cannot have both "required: true" and a "default"`);
-      }
-      const hasValidParamType = param.type === undefined || VALID_PARAM_TYPES.has(param.type);
-      const effectiveParamType = param.type ?? "string";
-      if (!hasValidParamType) {
-        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} has invalid type "${param.type}" — expected one of: string, number, integer, boolean, array, object`);
-      }
-      const defaultMatchesType = param.default === undefined || !hasValidParamType || isValidParamValueForType(param.default, effectiveParamType);
-      if (!defaultMatchesType) {
-        errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} default value ${JSON.stringify(param.default)} does not match declared type "${effectiveParamType}"`);
-      }
-      if (param.enum !== undefined) {
-        if (!Array.isArray(param.enum) || param.enum.length === 0) {
-          errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} "enum" must be a non-empty array`);
-        } else {
-          if (hasValidParamType) {
-            for (const value of param.enum) {
-              if (!isValidParamValueForType(value, effectiveParamType)) {
-                errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} enum value ${JSON.stringify(value)} does not match declared type "${effectiveParamType}"`);
-                break;
-              }
-            }
+          if (!reqItem.key) {
+            errors.push(`${rref}: missing required field "key"`);
+          } else if (!TOOL_NAME_RE.test(reqItem.key)) {
+            errors.push(`${rref}: "key" must start with a letter or underscore and contain only letters, digits, underscores, or hyphens`);
+          } else if (seenKeys.has(reqItem.key)) {
+            errors.push(`${rref}: duplicate request key "${reqItem.key}"`);
+          } else {
+            seenKeys.add(reqItem.key);
           }
-          if (defaultMatchesType && param.default !== undefined && !param.enum.some(value => isDeepStrictEqual(value, param.default))) {
-            errors.push(`${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""} default must be one of the enum values`);
-          }
+          validateRequestShape(reqItem, rref, errors);
         }
       }
-    }
-    if (tool.headers !== undefined && tool.headers !== null) {
-      if (typeof tool.headers !== "object" || Array.isArray(tool.headers)) {
-        errors.push(`${ref}: "headers" must be an object`);
-      } else {
-        for (const [k, v] of Object.entries(tool.headers)) {
-          if (typeof v !== "string" && typeof v !== "number") {
-            errors.push(`${ref}: headers["${k}"] must be a string or number`);
-          }
-        }
-      }
-    }
-    if (tool.auth !== undefined && tool.auth !== null) {
-      if (typeof tool.auth !== "object" || Array.isArray(tool.auth)) {
-        errors.push(`${ref}: "auth" must be an object`);
-      } else {
-        for (const key of Object.keys(tool.auth)) {
-          if (!VALID_AUTH_KEYS.has(key)) {
-            errors.push(`${ref}: auth has unsupported field "${key}"`);
-          }
-        }
-        if (tool.auth.bearer_env !== undefined && !isValidEnvVarName(tool.auth.bearer_env)) {
-          errors.push(`${ref}: "auth.bearer_env" must be an environment variable name containing only letters, digits, and underscores`);
-        }
-      }
-    }
-    if (tool.response !== undefined && tool.response !== null) {
-      if (typeof tool.response !== "object" || Array.isArray(tool.response)) {
-        errors.push(`${ref}: "response" must be an object`);
-      } else {
-        for (const key of Object.keys(tool.response)) {
-          if (!VALID_RESPONSE_KEYS.has(key)) {
-            errors.push(`${ref}: response has unsupported field "${key}"`);
-          }
-        }
-        if (tool.response.type !== undefined && !VALID_RESPONSE_TYPES.has(tool.response.type)) {
-          errors.push(`${ref}: invalid response.type "${tool.response.type}" — expected "text" or "json"`);
-        }
-        if (tool.response.path !== undefined && (typeof tool.response.path !== "string" || tool.response.path.trim() === "")) {
-          errors.push(`${ref}: "response.path" must be a non-empty string`);
-        }
-        if (tool.response.path !== undefined && (tool.response.type ?? "text") !== "json") {
-          errors.push(`${ref}: "response.path" requires response.type "json"`);
-        }
-        if (tool.response.template !== undefined && (typeof tool.response.template !== "string" || tool.response.template.trim() === "")) {
-          errors.push(`${ref}: "response.template" must be a non-empty string`);
-        }
-        if (tool.response.template !== undefined && (tool.response.type ?? "text") !== "json") {
-          errors.push(`${ref}: "response.template" requires response.type "json"`);
-        }
-      }
-    }
-    if (tool.timeout !== undefined && (typeof tool.timeout !== "number" || !Number.isFinite(tool.timeout) || tool.timeout <= 0)) {
-      errors.push(`${ref}: "timeout" must be a positive number (milliseconds)`);
-    }
-    if (tool.retry !== undefined && tool.retry !== null) {
-      if (typeof tool.retry !== "object" || Array.isArray(tool.retry)) {
-        errors.push(`${ref}: "retry" must be an object`);
-      } else {
-        for (const key of Object.keys(tool.retry)) {
-          if (!VALID_RETRY_KEYS.has(key)) {
-            errors.push(`${ref}: retry has unsupported field "${key}"`);
-          }
-        }
-        if (tool.retry.count !== undefined && (!Number.isInteger(tool.retry.count) || tool.retry.count < 0)) {
-          errors.push(`${ref}: "retry.count" must be a non-negative integer`);
-        }
-        if (tool.retry.backoff_ms !== undefined && (typeof tool.retry.backoff_ms !== "number" || !Number.isFinite(tool.retry.backoff_ms) || tool.retry.backoff_ms < 0)) {
-          errors.push(`${ref}: "retry.backoff_ms" must be a non-negative number (milliseconds)`);
-        }
-      }
+    } else {
+      validateRequestShape(tool, ref, errors);
     }
   }
   return errors;
@@ -528,11 +575,18 @@ function shouldRetryError(err, attempt, retryConfig) {
 }
 
 export async function callTool(toolConfig, args) {
-  const timeout = toolConfig.timeout ?? DEFAULT_TIMEOUT_MS;
-  const retryConfig = getRetryConfig(toolConfig);
+  if (Array.isArray(toolConfig.requests)) {
+    return callCompositeTool(toolConfig, args);
+  }
+  return callSingleRequest(toolConfig, args);
+}
+
+async function callSingleRequest(requestConfig, args) {
+  const timeout = requestConfig.timeout ?? DEFAULT_TIMEOUT_MS;
+  const retryConfig = getRetryConfig(requestConfig);
 
   try {
-    const { url, options } = buildRequest(toolConfig, args);
+    const { url, options } = buildRequest(requestConfig, args);
 
     for (let attempt = 0; ; attempt++) {
       const controller = new AbortController();
@@ -552,7 +606,7 @@ export async function callTool(toolConfig, args) {
             : raw;
           return { text: `HTTP ${res.status}: ${body}`, isError: true };
         }
-        return { text: extractResponse(raw, toolConfig.response) };
+        return { text: extractResponse(raw, requestConfig.response) };
       } catch (err) {
         if (shouldRetryError(err, attempt, retryConfig)) {
           const delayMs = getRetryDelayMs(retryConfig, attempt);
@@ -569,6 +623,39 @@ export async function callTool(toolConfig, args) {
   } catch (err) {
     const msg = err?.name === "AbortError" ? `Request timed out after ${timeout}ms` : (err?.message ?? String(err));
     return { text: `Error: ${msg}`, isError: true };
+  }
+}
+
+// A composite tool fans out to every entry in `requests` IN PARALLEL (this is
+// the whole point -- "one project overview" means k8s + logs + metrics +
+// errors + policy reports side by side, not queued one after another) and
+// merges the results into a single JSON object keyed by each request's
+// `key`. One sub-request failing (timeout, HTTP error, whatever) does not
+// fail the others -- it shows up as `{ error: "..." }` under its own key, so
+// a caller still gets everything that DID succeed instead of an all-or-
+// nothing failure.
+async function callCompositeTool(toolConfig, args) {
+  const settled = await Promise.allSettled(
+    toolConfig.requests.map(requestConfig => callSingleRequest(requestConfig, args))
+  );
+  const merged = {};
+  settled.forEach((result, i) => {
+    const key = toolConfig.requests[i].key;
+    if (result.status === "rejected") {
+      merged[key] = { error: result.reason?.message ?? String(result.reason) };
+      return;
+    }
+    const { text, isError } = result.value;
+    merged[key] = isError ? { error: text } : parseJsonOrKeepText(text);
+  });
+  return { text: JSON.stringify(merged, null, 2) };
+}
+
+function parseJsonOrKeepText(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
 }
 

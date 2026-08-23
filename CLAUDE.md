@@ -51,7 +51,7 @@ Package manager: `pnpm 11`.
 Note: `package.json` is currently pinned to `pnpm@10.33.0`; upgrade it to pnpm 11 when convenient.
 
 ```bash
-pnpm test        # ~336 tests (count grows; run to verify)
+pnpm test        # ~353 tests (count grows; run to verify)
 pnpm install     # install deps using the committed pnpm lockfile
 pnpm start       # start MCP server (stdio)
 ```

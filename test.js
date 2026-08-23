@@ -3766,3 +3766,195 @@ describe("HTTP transport (--http)", () => {
     }
   });
 });
+
+// ── composite tools ─────────────────────────────────────────────────────
+
+describe("validateConfig: composite tools", () => {
+  it("accepts a well-formed composite tool", () => {
+    const errors = validateConfig({
+      tools: [{
+        name: "project_overview",
+        description: "Everything about one project",
+        params: [{ name: "namespace", required: true }],
+        requests: [
+          { key: "pods", url: "http://localhost/pods/{namespace}", params: [{ name: "namespace", required: true }] },
+          { key: "logs", url: "http://localhost/logs", params: [{ name: "namespace", required: true }] },
+        ],
+      }],
+    });
+    assert.deepEqual(errors, []);
+  });
+
+  it("rejects requests that is not a non-empty array", () => {
+    const errors = validateConfig({ tools: [{ name: "t", requests: [] }] });
+    assert.ok(errors.some(e => e.includes('"requests" must be a non-empty array')));
+  });
+
+  it("rejects url alongside requests -- mutually exclusive", () => {
+    const errors = validateConfig({
+      tools: [{ name: "t", url: "http://localhost", requests: [{ key: "a", url: "http://localhost/a" }] }],
+    });
+    assert.ok(errors.some(e => e.includes('"url" is not valid alongside "requests"')));
+  });
+
+  it("rejects other single-request-only fields alongside requests", () => {
+    const errors = validateConfig({
+      tools: [{ name: "t", method: "POST", requests: [{ key: "a", url: "http://localhost/a" }] }],
+    });
+    assert.ok(errors.some(e => e.includes('"method" is not valid alongside "requests"')));
+  });
+
+  it("requires a key on every request entry", () => {
+    const errors = validateConfig({
+      tools: [{ name: "t", requests: [{ url: "http://localhost/a" }] }],
+    });
+    assert.ok(errors.some(e => e.includes('missing required field "key"')));
+  });
+
+  it("rejects duplicate request keys", () => {
+    const errors = validateConfig({
+      tools: [{ name: "t", requests: [
+        { key: "a", url: "http://localhost/a" },
+        { key: "a", url: "http://localhost/b" },
+      ] }],
+    });
+    assert.ok(errors.some(e => e.includes('duplicate request key "a"')));
+  });
+
+  it("rejects an unsupported field on a request entry", () => {
+    const errors = validateConfig({
+      tools: [{ name: "t", requests: [{ key: "a", url: "http://localhost/a", bogus: 1 }] }],
+    });
+    assert.ok(errors.some(e => e.includes('has unsupported field "bogus"')));
+  });
+
+  it("validates each request's own url/params like a regular tool", () => {
+    const errors = validateConfig({
+      tools: [{ name: "t", requests: [{ key: "a", url: "http://localhost/{missing}" }] }],
+    });
+    assert.ok(errors.some(e => e.includes('URL placeholder "{missing}" has no matching param definition')));
+  });
+});
+
+describe("configToTools: composite tools", () => {
+  it("builds the MCP schema from the composite tool's own top-level params", () => {
+    const [tool] = configToTools({
+      tools: [{
+        name: "project_overview",
+        description: "desc",
+        params: [{ name: "namespace", required: true }],
+        requests: [{ key: "pods", url: "http://localhost/pods/{namespace}", params: [{ name: "namespace", required: true }] }],
+      }],
+    });
+    assert.equal(tool.name, "project_overview");
+    assert.deepEqual(tool.inputSchema.required, ["namespace"]);
+  });
+});
+
+describe("callTool: composite tools", () => {
+  it("fans out to every request and merges results keyed by request.key, with a real local server", async () => {
+    globalThis.fetch = realFetch;
+    const server = createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      if (req.url.startsWith("/pods/")) {
+        res.end(JSON.stringify({ items: ["pod-a"] }));
+      } else {
+        res.end(JSON.stringify({ lines: ["log line"] }));
+      }
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = {
+        name: "project_overview",
+        params: [{ name: "namespace", required: true }],
+        requests: [
+          { key: "pods", url: `http://127.0.0.1:${port}/pods/{namespace}`, params: [{ name: "namespace", required: true }], response: { type: "json" } },
+          { key: "logs", url: `http://127.0.0.1:${port}/logs/{namespace}`, params: [{ name: "namespace", required: true }], response: { type: "json" } },
+        ],
+      };
+      const { text, isError } = await callTool(toolConfig, { namespace: "bonker" });
+      assert.equal(isError, undefined);
+      const merged = JSON.parse(text);
+      assert.deepEqual(merged.pods, { items: ["pod-a"] });
+      assert.deepEqual(merged.logs, { lines: ["log line"] });
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("one failing request does not fail the others -- shows up as {error} under its own key", async () => {
+    globalThis.fetch = realFetch;
+    const server = createServer((req, res) => {
+      if (req.url.startsWith("/pods/")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ items: ["pod-a"] }));
+      } else {
+        res.writeHead(503, { "Content-Type": "text/plain" });
+        res.end("unavailable");
+      }
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = {
+        name: "project_overview",
+        params: [{ name: "namespace", required: true }],
+        requests: [
+          { key: "pods", url: `http://127.0.0.1:${port}/pods/{namespace}`, params: [{ name: "namespace", required: true }], response: { type: "json" } },
+          { key: "errors", url: `http://127.0.0.1:${port}/errors/{namespace}`, params: [{ name: "namespace", required: true }] },
+        ],
+      };
+      const { text, isError } = await callTool(toolConfig, { namespace: "bonker" });
+      // The composite call itself succeeds even though one leg failed --
+      // partial data beats an all-or-nothing failure for an overview tool.
+      assert.equal(isError, undefined);
+      const merged = JSON.parse(text);
+      assert.deepEqual(merged.pods, { items: ["pod-a"] });
+      assert.match(merged.errors.error, /HTTP 503: unavailable/);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it("runs requests in parallel, not sequentially", async () => {
+    globalThis.fetch = realFetch;
+    const DELAY_MS = 100;
+    let concurrentInFlight = 0;
+    let maxConcurrent = 0;
+    const server = createServer((_req, res) => {
+      concurrentInFlight++;
+      maxConcurrent = Math.max(maxConcurrent, concurrentInFlight);
+      setTimeout(() => {
+        concurrentInFlight--;
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("ok");
+      }, DELAY_MS);
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    try {
+      const toolConfig = {
+        name: "t",
+        requests: [
+          { key: "a", url: `http://127.0.0.1:${port}/a` },
+          { key: "b", url: `http://127.0.0.1:${port}/b` },
+        ],
+      };
+      const t0 = Date.now();
+      await callTool(toolConfig, {});
+      const elapsed = Date.now() - t0;
+      // Both requests hit the server while the other was still in flight
+      // (proves parallel dispatch), and total wall time stayed close to
+      // one delay rather than the sum of two (proves it didn't just start
+      // both but await them one at a time).
+      assert.equal(maxConcurrent, 2);
+      assert.ok(elapsed < DELAY_MS * 2, `expected well under ${DELAY_MS * 2}ms for two parallel ${DELAY_MS}ms requests, took ${elapsed}ms`);
+    } finally {
+      await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+});

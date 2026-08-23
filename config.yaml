@@ -23,6 +23,12 @@
 # placeholders for human-readable output. Missing placeholders are left
 # unchanged. `response:` must be an object when set, and unknown nested
 # keys are rejected at startup.
+# A tool can be a `requests:` array instead of a single `url:` -- every
+# entry runs in parallel and the results merge into one JSON object keyed
+# by each entry's `key`. One request failing doesn't fail the others; its
+# key gets `{ "error": "..." }` instead. `url`/`requests` are mutually
+# exclusive on the tool itself; each request entry declares its own
+# url/method/headers/params/response/timeout/retry, same as a regular tool.
 
 tools: []
 
@@ -128,3 +134,31 @@ tools: []
 #       bearer_env: ALERTMANAGER_TOKEN
 #     response:
 #       type: json
+#
+#   # Composite tool: fans out to every request in parallel, merges into
+#   # one JSON object keyed by each request's `key`
+#   - name: project_overview
+#     description: Pods and recent errors for one project, in one call
+#     params:
+#       - name: namespace
+#         required: true
+#     requests:
+#       - key: pods
+#         url: https://127.0.0.1:6443/api/v1/namespaces/{namespace}/pods
+#         params:
+#           - name: namespace
+#             required: true
+#         auth:
+#           bearer_env: K3S_API_TOKEN
+#         response:
+#           type: json
+#       - key: recent_errors
+#         url: http://localhost:8000/api/projects/{namespace}/issues/
+#         params:
+#           - name: namespace
+#             required: true
+#         auth:
+#           bearer_env: GLITCHTIP_TOKEN
+#         response:
+#           type: json
+#           path: results
