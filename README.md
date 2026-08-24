@@ -71,7 +71,7 @@ By default the server speaks MCP over stdio. Pass `--http` to serve it over the 
 MCP_HTTP_TOKEN=some-long-random-token MCP_HTTP_PORT=3000 node index.js --http --config /path/to/config.yaml
 ```
 
-- Listens on `127.0.0.1:<MCP_HTTP_PORT>` (default `3000`), serving the MCP endpoint at `/mcp`. Put a reverse proxy in front for TLS and public exposure — this mode does not bind to a public interface itself.
+- Listens on `<MCP_HTTP_HOST>:<MCP_HTTP_PORT>` (default `127.0.0.1:3000`), serving the MCP endpoint at `/mcp`. The loopback default is deliberate for a bare-host deploy behind a local reverse proxy; set `MCP_HTTP_HOST=0.0.0.0` when running in a container, where a Service/proxy routes to the container's own IP rather than the host's loopback.
 - `MCP_HTTP_TOKEN` is required when `--http` is passed; startup fails otherwise. Every request must send `Authorization: Bearer <MCP_HTTP_TOKEN>` or it gets a `401`.
 - Stateless mode: no session is kept between requests.
 

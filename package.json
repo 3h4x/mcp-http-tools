@@ -1,6 +1,6 @@
 {
   "name": "@3h4x/mcp-http-tools",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Generic MCP-to-HTTP proxy — define tools via YAML config",
   "type": "module",
   "publishConfig": {

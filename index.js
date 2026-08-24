@@ -57,6 +57,7 @@ if (process.argv.includes("--http")) {
     process.exit(1);
   }
 
+  const host = process.env.MCP_HTTP_HOST ?? "127.0.0.1";
   const httpServer = createHttpServer(async (req, res) => {
     if (!verifyBearerToken(req.headers.authorization, token)) {
       res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Unauthorized" }));
@@ -75,8 +76,8 @@ if (process.argv.includes("--http")) {
     await mcpServer.connect(transport);
     await transport.handleRequest(req, res);
   });
-  httpServer.listen(port, "127.0.0.1", () => {
-    process.stderr.write(`[mcp-http-tools] HTTP transport listening on 127.0.0.1:${port}/mcp\n`);
+  httpServer.listen(port, host, () => {
+    process.stderr.write(`[mcp-http-tools] HTTP transport listening on ${host}:${port}/mcp\n`);
   });
 } else {
   const server = createMcpServer();
