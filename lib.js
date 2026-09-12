@@ -472,10 +472,20 @@ export function buildRequest(toolConfig, args) {
   }
   for (const p of toolConfig.params ?? []) {
     if (usedInUrl.has(p.name)) continue;
+    let value;
     if (p.name in args && args[p.name] !== undefined) {
-      url.searchParams.set(p.name, toQueryString(args[p.name]));
+      value = args[p.name];
     } else if (p.default !== undefined) {
-      url.searchParams.set(p.name, toQueryString(p.default));
+      value = p.default;
+    } else {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        url.searchParams.append(p.name, String(item));
+      }
+    } else {
+      url.searchParams.set(p.name, toQueryString(value));
     }
   }
   return {
