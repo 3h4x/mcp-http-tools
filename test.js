@@ -678,10 +678,23 @@ describe("buildRequest GET", () => {
     assert.equal(new URL(url).searchParams.get("limit"), "10");
   });
 
-  it("serializes array param as JSON string in query", () => {
+  it("serializes array param as repeated query keys", () => {
     const tc = { url: "http://localhost/api", params: [{ name: "tags", type: "array" }] };
     const { url } = buildRequest(tc, { tags: ["a", "b", "c"] });
-    assert.equal(new URL(url).searchParams.get("tags"), '["a","b","c"]');
+    assert.deepEqual(new URL(url).searchParams.getAll("tags"), ["a", "b", "c"]);
+  });
+
+  it("coerces non-string array items to strings across repeated query keys", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "ids", type: "array" }] };
+    const { url } = buildRequest(tc, { ids: [1, 2, 3] });
+    assert.deepEqual(new URL(url).searchParams.getAll("ids"), ["1", "2", "3"]);
+  });
+
+  it("omits the query key entirely for an empty array param", () => {
+    const tc = { url: "http://localhost/api", params: [{ name: "tags", type: "array" }] };
+    const { url } = buildRequest(tc, { tags: [] });
+    const parsed = new URL(url);
+    assert.equal(parsed.searchParams.has("tags"), false);
   });
 
   it("serializes object param as JSON string in query", () => {
@@ -741,10 +754,10 @@ describe("buildRequest GET", () => {
     assert.equal(new URL(url).searchParams.get("verbose"), "false");
   });
 
-  it("serializes array default as JSON string in query", () => {
+  it("serializes array default as repeated query keys", () => {
     const tc = { url: "http://localhost/api", params: [{ name: "tags", type: "array", default: ["a", "b"] }] };
     const { url } = buildRequest(tc, {});
-    assert.equal(new URL(url).searchParams.get("tags"), '["a","b"]');
+    assert.deepEqual(new URL(url).searchParams.getAll("tags"), ["a", "b"]);
   });
 
   it("sends null arg value as string 'null' in query", () => {
