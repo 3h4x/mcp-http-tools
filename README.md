@@ -130,7 +130,7 @@ When a param entry is present, it must be an object using only the fields above.
 
 The MCP SDK does not validate arguments against the advertised schema, so this server does. `enum`, `pattern` and `maxLength` are enforced on every call: a violating argument fails the call before any HTTP request is made.
 
-Set `strict_args: true` at the top of the config to additionally reject unknown arguments, wrong types and missing required arguments. Unknown arguments matter for `GET` tools, because they are appended to the query string: without `strict_args`, a caller could add a second `query=` next to one the config pinned in the URL.
+Set `strict: true` on a tool (or `strict_args: true` at the top of the config, for every tool) to additionally reject unknown arguments, wrong types and missing required arguments. Unknown arguments matter for `GET` tools, because they are appended to the query string: without `strict_args`, a caller could add a second `query=` next to one the config pinned in the URL.
 
 Together with `{param}` placeholders in the URL, `pattern` lets a tool expose a *narrow* slice of an API without a proxy. The fixed part of the request lives in the URL, and the caller can only fill a validated hole:
 

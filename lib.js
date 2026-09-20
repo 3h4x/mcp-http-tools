@@ -121,7 +121,7 @@ export function verifyBearerToken(authHeader, expectedToken) {
 const VALID_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const VALID_RESPONSE_TYPES = new Set(["text", "json"]);
 const VALID_RESPONSE_KEYS = new Set(["type", "path", "template"]);
-const VALID_TOOL_KEYS = new Set(["name", "description", "url", "method", "headers", "params", "response", "timeout", "auth", "retry", "requests"]);
+const VALID_TOOL_KEYS = new Set(["name", "description", "url", "method", "headers", "params", "response", "timeout", "auth", "retry", "requests", "strict"]);
 const VALID_REQUEST_KEYS = new Set(["key", "url", "method", "headers", "params", "response", "timeout", "auth", "retry"]);
 const REQUEST_ONLY_TOOL_KEYS = ["url", "method", "headers", "response", "timeout", "auth", "retry"];
 const VALID_PARAM_KEYS = new Set(["name", "description", "type", "enum", "required", "default", "pattern", "maxLength"]);
@@ -180,6 +180,9 @@ function validateRequestShape(obj, ref, errors) {
   }
   if (obj.params != null && !Array.isArray(obj.params)) {
     errors.push(`${ref}: "params" must be an array`);
+  }
+  if (obj.strict !== undefined && typeof obj.strict !== "boolean") {
+    errors.push(`${ref}: "strict" must be a boolean`);
   }
   const seenParams = new Set();
   for (const [j, param] of (Array.isArray(obj.params) ? obj.params : []).entries()) {
@@ -718,7 +721,7 @@ function shouldRetryError(err, attempt, retryConfig) {
 }
 
 export async function callTool(toolConfig, args, options = {}) {
-  const strict = options.strict === true;
+  const strict = options.strict === true || toolConfig.strict === true;
   if (Array.isArray(toolConfig.requests)) {
     if (strict) {
       const known = new Set(toolConfig.requests.flatMap(r => (r.params ?? []).map(p => p.name)));
@@ -729,7 +732,7 @@ export async function callTool(toolConfig, args, options = {}) {
     }
     return callCompositeTool(toolConfig, args);
   }
-  return callSingleRequest(toolConfig, args, options);
+  return callSingleRequest(toolConfig, args, { ...options, strict });
 }
 
 function compileParamPattern(pattern) {

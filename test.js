@@ -4197,3 +4197,28 @@ access:
     assert.equal(res.status, 401);
   });
 });
+
+describe("per-tool strict", () => {
+  it("strict: true on one tool rejects unknown args there, and leaves other tools lenient", async () => {
+    const seen = [];
+    globalThis.fetch = async (u) => { seen.push(String(u)); return new Response("ok"); };
+    try {
+      const strictTool = { name: "a", url: "http://x/a", strict: true, params: [{ name: "p" }] };
+      const lenientTool = { name: "b", url: "http://x/b", params: [{ name: "p" }] };
+      const r1 = await callTool(strictTool, { p: "1", extra: "2" });
+      assert.equal(r1.isError, true);
+      assert.match(r1.text, /unknown argument/);
+      const r2 = await callTool(lenientTool, { p: "1", extra: "2" });
+      assert.notEqual(r2.isError, true);
+      assert.equal(seen.length, 1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("validateConfig requires a boolean", () => {
+    const errs = validateConfig({ tools: [{ name: "a", url: "http://x", strict: "yes" }] });
+    assert.match(errs.join("\n"), /"strict" must be a boolean/);
+    assert.deepEqual(validateConfig({ tools: [{ name: "a", url: "http://x", strict: true }] }), []);
+  });
+});
