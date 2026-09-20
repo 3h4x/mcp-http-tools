@@ -124,7 +124,7 @@ const VALID_RESPONSE_KEYS = new Set(["type", "path", "template"]);
 const VALID_TOOL_KEYS = new Set(["name", "description", "url", "method", "headers", "params", "response", "timeout", "auth", "retry", "requests"]);
 const VALID_REQUEST_KEYS = new Set(["key", "url", "method", "headers", "params", "response", "timeout", "auth", "retry"]);
 const REQUEST_ONLY_TOOL_KEYS = ["url", "method", "headers", "response", "timeout", "auth", "retry"];
-const VALID_PARAM_KEYS = new Set(["name", "description", "type", "enum", "required", "default"]);
+const VALID_PARAM_KEYS = new Set(["name", "description", "type", "enum", "required", "default", "pattern", "maxLength"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const VALID_AUTH_KEYS = new Set(["bearer_env"]);
 const VALID_RETRY_KEYS = new Set(["count", "backoff_ms"]);
@@ -231,6 +231,48 @@ function validateRequestShape(obj, ref, errors) {
       }
     }
   }
+  for (const [j, param] of (Array.isArray(obj.params) ? obj.params : []).entries()) {
+    if (param == null || typeof param !== "object" || Array.isArray(param)) continue;
+    const pref = `${ref}: params[${j}]${param.name ? ` ("${param.name}")` : ""}`;
+    if (param.pattern !== undefined) {
+      if (param.type !== undefined && param.type !== "string") {
+        errors.push(`${pref} "pattern" is only valid on string params`);
+      }
+      let re = null;
+      if (typeof param.pattern !== "string" || param.pattern === "") {
+        errors.push(`${pref} "pattern" must be a non-empty string`);
+      } else {
+        try {
+          re = compileParamPattern(param.pattern);
+        } catch {
+          errors.push(`${pref} "pattern" is not a valid regular expression`);
+        }
+      }
+      if (re) {
+        if (typeof param.default === "string" && !re.test(param.default)) {
+          errors.push(`${pref} default value does not match "pattern"`);
+        }
+        if (Array.isArray(param.enum)) {
+          for (const value of param.enum) {
+            if (typeof value === "string" && !re.test(value)) {
+              errors.push(`${pref} enum value ${JSON.stringify(value)} does not match "pattern"`);
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (param.maxLength !== undefined) {
+      if (param.type !== undefined && param.type !== "string") {
+        errors.push(`${pref} "maxLength" is only valid on string params`);
+      }
+      if (!Number.isInteger(param.maxLength) || param.maxLength < 1) {
+        errors.push(`${pref} "maxLength" must be a positive integer`);
+      } else if (typeof param.default === "string" && param.default.length > param.maxLength) {
+        errors.push(`${pref} default value is longer than "maxLength"`);
+      }
+    }
+  }
   if (obj.headers !== undefined && obj.headers !== null) {
     if (typeof obj.headers !== "object" || Array.isArray(obj.headers)) {
       errors.push(`${ref}: "headers" must be an object`);
@@ -304,12 +346,101 @@ function validateRequestShape(obj, ref, errors) {
   }
 }
 
+const VALID_ACCESS_KEYS = new Set(["name", "token_env", "tools"]);
+const MIN_SCOPED_TOKEN_LENGTH = 32;
+
+function validateAccess(config, errors) {
+  if (config.strict_args !== undefined && typeof config.strict_args !== "boolean") {
+    errors.push('"strict_args" must be a boolean');
+  }
+  if (config.access === undefined || config.access === null) return;
+  if (!Array.isArray(config.access)) {
+    errors.push('"access" must be an array');
+    return;
+  }
+  const toolNames = new Set((Array.isArray(config.tools) ? config.tools : []).map(t => t?.name));
+  const seenNames = new Set();
+  const seenEnvs = new Set();
+  for (const [i, entry] of config.access.entries()) {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      errors.push(`access[${i}]: entry must be an object`);
+      continue;
+    }
+    const ref = `access[${i}]${entry.name ? ` ("${entry.name}")` : ""}`;
+    for (const key of Object.keys(entry)) {
+      if (!VALID_ACCESS_KEYS.has(key)) errors.push(`${ref}: has unsupported field "${key}"`);
+    }
+    if (typeof entry.name !== "string" || !entry.name) {
+      errors.push(`${ref}: missing required field "name"`);
+    } else if (seenNames.has(entry.name)) {
+      errors.push(`${ref}: duplicate access name "${entry.name}"`);
+    } else {
+      seenNames.add(entry.name);
+    }
+    if (!isValidEnvVarName(entry.token_env)) {
+      errors.push(`${ref}: "token_env" must be an environment variable name containing only letters, digits, and underscores`);
+    } else if (entry.token_env === "MCP_HTTP_TOKEN") {
+      errors.push(`${ref}: "token_env" must not be MCP_HTTP_TOKEN -- that is the unrestricted token`);
+    } else if (seenEnvs.has(entry.token_env)) {
+      errors.push(`${ref}: duplicate token_env "${entry.token_env}"`);
+    } else {
+      seenEnvs.add(entry.token_env);
+    }
+    if (!Array.isArray(entry.tools) || entry.tools.length === 0) {
+      errors.push(`${ref}: "tools" must be a non-empty array of tool names`);
+    } else {
+      for (const t of entry.tools) {
+        if (!toolNames.has(t)) errors.push(`${ref}: unknown tool "${t}"`);
+      }
+      if (new Set(entry.tools).size !== entry.tools.length) errors.push(`${ref}: "tools" lists a tool twice`);
+    }
+  }
+}
+
+// Builds the principals that may call the HTTP transport: the unrestricted MCP_HTTP_TOKEN
+// (tools: null = every tool) plus one per `access` entry, restricted to its listed tools.
+// Fails closed: an access entry whose token env var is unset, too short or a duplicate of any
+// other token aborts startup instead of silently leaving that principal out or, worse, open.
+export function resolvePrincipals(config, env = process.env) {
+  const principals = [];
+  const errors = [];
+  if (env.MCP_HTTP_TOKEN) principals.push({ name: "admin", token: env.MCP_HTTP_TOKEN, tools: null });
+  for (const entry of config.access ?? []) {
+    const token = env[entry.token_env];
+    if (!token) {
+      errors.push(`access "${entry.name}": ${entry.token_env} is not set`);
+      continue;
+    }
+    if (token.length < MIN_SCOPED_TOKEN_LENGTH) {
+      errors.push(`access "${entry.name}": ${entry.token_env} must be at least ${MIN_SCOPED_TOKEN_LENGTH} characters`);
+      continue;
+    }
+    principals.push({ name: entry.name, token, tools: new Set(entry.tools) });
+  }
+  const seen = new Set();
+  for (const p of principals) {
+    if (seen.has(p.token)) errors.push(`access "${p.name}": token is identical to another principal's token`);
+    seen.add(p.token);
+  }
+  return { principals, errors };
+}
+
+// Checks every principal (no early exit) so response time does not reveal which one matched.
+export function authenticate(authHeader, principals) {
+  let match = null;
+  for (const p of principals) {
+    if (verifyBearerToken(authHeader, p.token) && match === null) match = p;
+  }
+  return match;
+}
+
 export function validateConfig(config) {
   const errors = [];
   if (config.tools != null && !Array.isArray(config.tools)) {
     errors.push('"tools" must be an array');
     return errors;
   }
+  validateAccess(config, errors);
   const seenNames = new Set();
   for (const [i, tool] of (config.tools ?? []).entries()) {
     if (tool == null || typeof tool !== "object" || Array.isArray(tool)) {
@@ -385,6 +516,8 @@ export function configToTools(config) {
         type: p.type ?? "string",
         ...(p.description && { description: p.description }),
         ...(p.enum && { enum: p.enum }),
+        ...(p.pattern !== undefined && { pattern: `^(?:${p.pattern})$` }),
+        ...(p.maxLength !== undefined && { maxLength: p.maxLength }),
         ...(p.default !== undefined && { default: p.default }),
       };
       if (p.required) required.push(p.name);
@@ -584,14 +717,66 @@ function shouldRetryError(err, attempt, retryConfig) {
   return err?.name === "AbortError" || err instanceof TypeError;
 }
 
-export async function callTool(toolConfig, args) {
+export async function callTool(toolConfig, args, options = {}) {
+  const strict = options.strict === true;
   if (Array.isArray(toolConfig.requests)) {
+    if (strict) {
+      const known = new Set(toolConfig.requests.flatMap(r => (r.params ?? []).map(p => p.name)));
+      const unknown = Object.keys(args ?? {}).filter(k => !known.has(k));
+      if (unknown.length > 0) {
+        return { text: `Error: unknown argument(s): ${unknown.join(", ")}`, isError: true };
+      }
+    }
     return callCompositeTool(toolConfig, args);
   }
-  return callSingleRequest(toolConfig, args);
+  return callSingleRequest(toolConfig, args, options);
 }
 
-async function callSingleRequest(requestConfig, args) {
+function compileParamPattern(pattern) {
+  return new RegExp(`^(?:${pattern})$`);
+}
+
+// The MCP SDK does not validate arguments against the advertised inputSchema, so anything a
+// param declares (enum, pattern, maxLength) has to be enforced here or it is only a hint.
+// `strict` additionally rejects unknown arguments and wrong types. Unknown arguments matter for
+// GET tools: they are appended to the query string, so a caller could otherwise add a second
+// `query=` next to one the config pinned in the URL.
+// Returns an error message, or null when the arguments are acceptable.
+export function validateArgs(params, args, { strict = false } = {}) {
+  args = args ?? {};
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return "arguments must be an object";
+  const byName = new Map((params ?? []).map(p => [p.name, p]));
+  if (strict) {
+    const unknown = Object.keys(args).filter(k => !byName.has(k));
+    if (unknown.length > 0) return `unknown argument(s): ${unknown.join(", ")}`;
+  }
+  for (const [name, value] of Object.entries(args)) {
+    const param = byName.get(name);
+    if (!param || value === undefined) continue;
+    if (strict && !isValidParamValueForType(value, param.type ?? "string")) {
+      return `argument "${name}" must be of type ${param.type ?? "string"}`;
+    }
+    if (param.enum !== undefined && !param.enum.some(v => isDeepStrictEqual(v, value))) {
+      return `argument "${name}" must be one of: ${param.enum.join(", ")}`;
+    }
+    if (param.pattern !== undefined && !compileParamPattern(param.pattern).test(String(value))) {
+      return `argument "${name}" does not match the allowed pattern`;
+    }
+    if (param.maxLength !== undefined && String(value).length > param.maxLength) {
+      return `argument "${name}" is longer than ${param.maxLength} characters`;
+    }
+  }
+  if (strict) {
+    for (const p of params ?? []) {
+      if (p.required === true && args[p.name] === undefined) return `missing required argument "${p.name}"`;
+    }
+  }
+  return null;
+}
+
+async function callSingleRequest(requestConfig, args, options = {}) {
+  const invalid = validateArgs(requestConfig.params, args, options);
+  if (invalid) return { text: `Error: ${invalid}`, isError: true };
   const timeout = requestConfig.timeout ?? DEFAULT_TIMEOUT_MS;
   const retryConfig = getRetryConfig(requestConfig);
 

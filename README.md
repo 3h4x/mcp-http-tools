@@ -121,8 +121,43 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 | `enum` | no | | Non-empty list of allowed values. When `type` is set, every enum value must match it |
 | `required` | no | `false` | Whether the LLM must provide this |
 | `default` | no | | Value used when param is omitted. It must match the effective param type, and if `enum` is set it must also be one of those values |
+| `pattern` | no | | Regular expression a string value must match **in full** (anchored as `^(?:pattern)$`). Enforced when the tool is called, and advertised to clients in the schema |
+| `maxLength` | no | | Maximum length of a string value. Enforced when the tool is called |
 
 When a param entry is present, it must be an object using only the fields above. Unsupported param keys are rejected at startup.
+
+### Argument validation
+
+The MCP SDK does not validate arguments against the advertised schema, so this server does. `enum`, `pattern` and `maxLength` are enforced on every call: a violating argument fails the call before any HTTP request is made.
+
+Set `strict_args: true` at the top of the config to additionally reject unknown arguments, wrong types and missing required arguments. Unknown arguments matter for `GET` tools, because they are appended to the query string: without `strict_args`, a caller could add a second `query=` next to one the config pinned in the URL.
+
+Together with `{param}` placeholders in the URL, `pattern` lets a tool expose a *narrow* slice of an API without a proxy. The fixed part of the request lives in the URL, and the caller can only fill a validated hole:
+
+```yaml
+strict_args: true
+tools:
+  - name: search_glasspad_logs
+    url: http://loki:3100/loki/api/v1/query_range?query=%7Bnamespace%3D%22glasspad%22%7D%20%7C%3D%20%22{contains}%22
+    params:
+      - name: contains
+        pattern: "[A-Za-z0-9 _.:-]*"   # no quote, backslash or brace: cannot break out of the LogQL string
+        maxLength: 80
+        default: ""
+```
+
+## Access tokens
+
+`MCP_HTTP_TOKEN` is the unrestricted token: it sees every tool. Add an `access` list to give other callers their own token and a tool allowlist:
+
+```yaml
+access:
+  - name: maciej
+    token_env: MCP_TOKEN_MACIEJ      # env var holding the token, at least 32 characters
+    tools: [search_glasspad_logs]
+```
+
+The token alone selects the scope, on the same `/mcp` endpoint. `tools/list` returns only that principal's tools, and calling any other tool answers `Unknown tool`, exactly as if it did not exist. Startup fails if a listed token's env var is unset, shorter than 32 characters, or identical to another principal's token, so a scoped principal can never silently disappear or fall open. Each call by a scoped principal logs `principal=<name> tool=<tool>` to stderr (never arguments).
 
 ### How params map to requests
 

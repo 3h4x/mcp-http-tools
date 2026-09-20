@@ -43,6 +43,8 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 - `default` on params → used when LLM omits the param
 - `auth.bearer_env: MY_TOKEN` → shorthand for `Authorization: Bearer ${MY_TOKEN}` (value must be a valid env var name)
 - `retry.count` + `retry.backoff_ms` → opt-in retries for transient HTTP/network failures with exponential backoff
+- `pattern` / `maxLength` on string params + `enum` → enforced at call time (`validateArgs`), not just advertised; `strict_args: true` also rejects unknown args, wrong types and missing required args
+- `access:` list → extra bearer tokens (`token_env`) each restricted to a `tools` allowlist (`resolvePrincipals`/`authenticate`); `MCP_HTTP_TOKEN` stays unrestricted
 - `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` → explicit config override that fails fast on missing files or invalid YAML
 
 ## Commands
