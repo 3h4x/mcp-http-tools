@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool, verifyBearerToken } from "./lib.js";
+import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool, verifyBearerToken, validateArgs, resolvePrincipals, authenticate } from "./lib.js";
 
 const realFetch = globalThis.fetch;
 
@@ -3969,5 +3969,231 @@ describe("callTool: composite tools", () => {
     } finally {
       await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
     }
+  });
+});
+
+// ── validateArgs / pattern / maxLength ────────────────────────────────────
+
+describe("validateArgs", () => {
+  const params = [
+    { name: "ns", enum: ["glasspad"], required: true },
+    { name: "q", pattern: "[a-z0-9 ]*", maxLength: 8 },
+    { name: "n", type: "integer" },
+  ];
+
+  it("accepts conforming arguments", () => {
+    assert.equal(validateArgs(params, { ns: "glasspad", q: "abc 12" }), null);
+  });
+
+  it("enforces enum at call time, not only in the schema", () => {
+    assert.match(validateArgs(params, { ns: "bonker" }), /must be one of/);
+  });
+
+  it("anchors the pattern -- a partial match is not a match", () => {
+    assert.match(validateArgs(params, { q: 'abc" or {x="y"}' }), /allowed pattern/);
+    assert.match(validateArgs([{ name: "q", pattern: "a" }], { q: "ba" }), /allowed pattern/);
+  });
+
+  it("does not let a trailing newline slip past the anchor", () => {
+    assert.match(validateArgs([{ name: "q", pattern: "[a-z]+" }], { q: "abc\n" }), /allowed pattern/);
+  });
+
+  it("enforces maxLength", () => {
+    assert.match(validateArgs(params, { q: "abcdefghi" }), /longer than 8/);
+  });
+
+  it("only rejects unknown arguments and wrong types in strict mode", () => {
+    assert.equal(validateArgs(params, { extra: "x" }), null);
+    assert.match(validateArgs(params, { extra: "x" }, { strict: true }), /unknown argument\(s\): extra/);
+    assert.equal(validateArgs(params, { n: "5" }), null);
+    assert.match(validateArgs(params, { ns: "glasspad", n: "5" }, { strict: true }), /must be of type integer/);
+  });
+
+  it("requires required arguments in strict mode", () => {
+    assert.match(validateArgs(params, {}, { strict: true }), /missing required argument "ns"/);
+  });
+});
+
+describe("pattern/maxLength config", () => {
+  const base = (param) => ({ tools: [{ name: "t", url: "http://x/{p}", params: [{ name: "p", ...param }] }] });
+
+  it("advertises an anchored pattern and maxLength in the schema", () => {
+    const [tool] = configToTools(base({ pattern: "[a-z]+", maxLength: 5 }));
+    assert.equal(tool.inputSchema.properties.p.pattern, "^(?:[a-z]+)$");
+    assert.equal(tool.inputSchema.properties.p.maxLength, 5);
+  });
+
+  it("rejects an invalid regex, a non-string param, and bad maxLength", () => {
+    assert.match(validateConfig(base({ pattern: "(" })).join("\n"), /not a valid regular expression/);
+    assert.match(validateConfig(base({ type: "integer", pattern: "1" })).join("\n"), /only valid on string params/);
+    assert.match(validateConfig(base({ maxLength: 0 })).join("\n"), /positive integer/);
+  });
+
+  it("rejects a default that violates the pattern", () => {
+    assert.match(validateConfig(base({ pattern: "[a-z]+", default: "A1" })).join("\n"), /does not match "pattern"/);
+  });
+
+  it("callTool refuses a violating argument before any request is made", async () => {
+    globalThis.fetch = async () => { throw new Error("must not be called"); };
+    try {
+      const cfg = base({ pattern: "[a-z]+" }).tools[0];
+      const r = await callTool(cfg, { p: 'a"}' });
+      assert.equal(r.isError, true);
+      assert.match(r.text, /allowed pattern/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("strict callTool refuses an extra arg that would be appended to a pinned query string", async () => {
+    globalThis.fetch = async () => { throw new Error("must not be called"); };
+    try {
+      const cfg = { name: "t", url: "http://loki/q?query=%7Bnamespace%3D%22glasspad%22%7D", params: [{ name: "limit" }] };
+      const r = await callTool(cfg, { query: '{namespace="bonker"}' }, { strict: true });
+      assert.equal(r.isError, true);
+      assert.match(r.text, /unknown argument/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+// ── access tokens ─────────────────────────────────────────────────────────
+
+describe("access tokens", () => {
+  const TOKEN_B = "b".repeat(40);
+  const config = () => ({
+    tools: [
+      { name: "all", url: "http://x/a" },
+      { name: "scoped", url: "http://x/b" },
+    ],
+    access: [{ name: "maciej", token_env: "MCP_TOKEN_MACIEJ", tools: ["scoped"] }],
+  });
+
+  it("validates access entries", () => {
+    assert.deepEqual(validateConfig(config()), []);
+    const bad = config();
+    bad.access = [
+      { name: "m", token_env: "MCP_HTTP_TOKEN", tools: ["scoped"] },
+      { name: "m", token_env: "T2", tools: ["nope"] },
+      { name: "z", token_env: "T3", tools: [] },
+      { name: "q", token_env: "not valid!", tools: ["all"], extra: 1 },
+    ];
+    const out = validateConfig(bad).join("\n");
+    assert.match(out, /must not be MCP_HTTP_TOKEN/);
+    assert.match(out, /duplicate access name/);
+    assert.match(out, /unknown tool "nope"/);
+    assert.match(out, /non-empty array/);
+    assert.match(out, /unsupported field "extra"/);
+  });
+
+  it("resolves an admin principal with every tool and a scoped one with its allowlist", () => {
+    const { principals, errors } = resolvePrincipals(config(), { MCP_HTTP_TOKEN: "a".repeat(40), MCP_TOKEN_MACIEJ: TOKEN_B });
+    assert.deepEqual(errors, []);
+    assert.equal(principals[0].tools, null);
+    assert.deepEqual([...principals[1].tools], ["scoped"]);
+  });
+
+  it("fails closed on a missing, short, or duplicated scoped token", () => {
+    const admin = "a".repeat(40);
+    assert.match(resolvePrincipals(config(), { MCP_HTTP_TOKEN: admin }).errors.join(), /MCP_TOKEN_MACIEJ is not set/);
+    assert.match(resolvePrincipals(config(), { MCP_HTTP_TOKEN: admin, MCP_TOKEN_MACIEJ: "short" }).errors.join(), /at least 32/);
+    assert.match(resolvePrincipals(config(), { MCP_HTTP_TOKEN: admin, MCP_TOKEN_MACIEJ: admin }).errors.join(), /identical/);
+  });
+
+  it("authenticate maps a token to its principal and rejects everything else", () => {
+    const { principals } = resolvePrincipals(config(), { MCP_HTTP_TOKEN: "a".repeat(40), MCP_TOKEN_MACIEJ: TOKEN_B });
+    assert.equal(authenticate(`Bearer ${TOKEN_B}`, principals).name, "maciej");
+    assert.equal(authenticate(`Bearer ${"a".repeat(40)}`, principals).name, "admin");
+    assert.equal(authenticate("Bearer nope", principals), null);
+    assert.equal(authenticate(undefined, principals), null);
+  });
+});
+
+describe("access tokens over HTTP", () => {
+  const ADMIN = "a".repeat(40);
+  const SCOPED = "s".repeat(40);
+  let dir, child, port, upstream, upstreamUrls;
+
+  beforeEach(async () => {
+    dir = join(tmpdir(), `mcp-access-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    upstreamUrls = [];
+    upstream = createServer((req, res) => { upstreamUrls.push(req.url); res.end("{}"); });
+    await new Promise(r => upstream.listen(0, "127.0.0.1", r));
+    const up = upstream.address().port;
+    writeFileSync(join(dir, "c.yaml"), `
+strict_args: true
+tools:
+  - name: open_tool
+    url: http://127.0.0.1:${up}/open
+  - name: scoped_logs
+    url: http://127.0.0.1:${up}/logs?query=%7Bnamespace%3D%22glasspad%22%7D%20%7C%3D%20%22{contains}%22
+    params:
+      - name: contains
+        pattern: "[A-Za-z0-9 _.:-]*"
+        maxLength: 40
+        default: ""
+access:
+  - name: maciej
+    token_env: MCP_TOKEN_MACIEJ
+    tools: [scoped_logs]
+`);
+    port = 39000 + Math.floor(Math.random() * 500);
+    child = spawn("node", ["index.js", "--http", "--config", join(dir, "c.yaml")], {
+      env: { ...process.env, MCP_HTTP_TOKEN: ADMIN, MCP_TOKEN_MACIEJ: SCOPED, MCP_HTTP_PORT: String(port) },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    await new Promise((resolve, reject) => {
+      child.stderr.on("data", d => { if (String(d).includes("listening")) resolve(); });
+      child.on("exit", c => reject(new Error(`exited ${c}`)));
+    });
+  });
+
+  afterEach(async () => {
+    child.kill();
+    await new Promise(r => upstream.close(r));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const connect = async (token) => {
+    const client = new Client({ name: "t", version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    }));
+    return client;
+  };
+
+  it("lists only the scoped principal's tools, and everything for admin", async () => {
+    const scoped = await connect(SCOPED);
+    assert.deepEqual((await scoped.listTools()).tools.map(t => t.name), ["scoped_logs"]);
+    const admin = await connect(ADMIN);
+    assert.deepEqual((await admin.listTools()).tools.map(t => t.name).sort(), ["open_tool", "scoped_logs"]);
+  });
+
+  it("refuses a tool outside the allowlist as if it did not exist", async () => {
+    const scoped = await connect(SCOPED);
+    const r = await scoped.callTool({ name: "open_tool", arguments: {} });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0].text, /Unknown tool/);
+    assert.equal(upstreamUrls.length, 0);
+  });
+
+  it("keeps the pinned selector, and blocks injection and extra arguments", async () => {
+    const scoped = await connect(SCOPED);
+    const ok = await scoped.callTool({ name: "scoped_logs", arguments: { contains: "error" } });
+    assert.notEqual(ok.isError, true);
+    assert.equal(decodeURIComponent(upstreamUrls[0]), '/logs?query={namespace="glasspad"} |= "error"');
+
+    const inj = await scoped.callTool({ name: "scoped_logs", arguments: { contains: 'x"} or {namespace="bonker"' } });
+    assert.equal(inj.isError, true);
+    const extra = await scoped.callTool({ name: "scoped_logs", arguments: { contains: "e", query: '{namespace="bonker"}' } });
+    assert.equal(extra.isError, true);
+    assert.equal(upstreamUrls.length, 1);
+  });
+
+  it("rejects an unknown token", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST", headers: { Authorization: "Bearer nope" } });
+    assert.equal(res.status, 401);
   });
 });

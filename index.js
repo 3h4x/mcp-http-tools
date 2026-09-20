@@ -4,7 +4,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig, validateConfig, configToTools, callTool, verifyBearerToken } from "./lib.js";
+import { loadConfig, validateConfig, configToTools, callTool, resolvePrincipals, authenticate } from "./lib.js";
 
 let config;
 try {
@@ -26,23 +26,27 @@ const toolMap = new Map(toolConfigs.map(t => [t.name, t]));
 // instance is created per request (mirroring the SDK's own stateless-transport example) because
 // Server#connect() throws "Already connected to a transport" if reused before the prior
 // transport's close() has unset it -- a real race under a single shared Server + StreamableHTTPServerTransport.
-function createMcpServer() {
+function createMcpServer(principal = null) {
   const server = new Server(
     { name: "mcp-http-tools", version: "2.0.0" },
     { capabilities: { tools: {} } }
   );
 
+  const allowed = principal?.tools ?? null;
+
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: mcpTools,
+    tools: allowed ? mcpTools.filter(t => allowed.has(t.name)) : mcpTools,
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const toolConfig = toolMap.get(name);
+    // A tool outside the principal's allowlist is indistinguishable from one that does not exist.
+    const toolConfig = allowed && !allowed.has(name) ? undefined : toolMap.get(name);
     if (!toolConfig) {
       return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
     }
-    const { text, isError } = await callTool(toolConfig, args);
+    if (principal) process.stderr.write(`[mcp-http-tools] call principal=${principal.name} tool=${name}\n`);
+    const { text, isError } = await callTool(toolConfig, args, { strict: config.strict_args === true });
     return { content: [{ type: "text", text }], ...(isError && { isError: true }) };
   });
 
@@ -51,15 +55,20 @@ function createMcpServer() {
 
 if (process.argv.includes("--http")) {
   const port = Number(process.env.MCP_HTTP_PORT ?? 3000);
-  const token = process.env.MCP_HTTP_TOKEN;
-  if (!token) {
+  if (!process.env.MCP_HTTP_TOKEN) {
     process.stderr.write("[mcp-http-tools] MCP_HTTP_TOKEN must be set to use --http\n");
+    process.exit(1);
+  }
+  const { principals, errors: principalErrors } = resolvePrincipals(config);
+  if (principalErrors.length > 0) {
+    for (const e of principalErrors) process.stderr.write(`[mcp-http-tools] config error: ${e}\n`);
     process.exit(1);
   }
 
   const host = process.env.MCP_HTTP_HOST ?? "127.0.0.1";
   const httpServer = createHttpServer(async (req, res) => {
-    if (!verifyBearerToken(req.headers.authorization, token)) {
+    const principal = authenticate(req.headers.authorization, principals);
+    if (!principal) {
       res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Unauthorized" }));
       return;
     }
@@ -67,7 +76,7 @@ if (process.argv.includes("--http")) {
       res.writeHead(404, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Not found" }));
       return;
     }
-    const mcpServer = createMcpServer();
+    const mcpServer = createMcpServer(principal);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       transport.close();
