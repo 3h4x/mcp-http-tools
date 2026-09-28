@@ -124,7 +124,7 @@ const VALID_RESPONSE_KEYS = new Set(["type", "path", "template"]);
 const VALID_TOOL_KEYS = new Set(["name", "description", "url", "method", "headers", "params", "response", "timeout", "auth", "retry", "requests", "strict"]);
 const VALID_REQUEST_KEYS = new Set(["key", "url", "method", "headers", "params", "response", "timeout", "auth", "retry"]);
 const REQUEST_ONLY_TOOL_KEYS = ["url", "method", "headers", "response", "timeout", "auth", "retry"];
-const VALID_PARAM_KEYS = new Set(["name", "description", "type", "enum", "required", "default", "pattern", "maxLength"]);
+const VALID_PARAM_KEYS = new Set(["name", "description", "type", "enum", "required", "default", "pattern", "maxLength", "minimum", "maximum"]);
 const VALID_PARAM_TYPES = new Set(["string", "number", "integer", "boolean", "array", "object"]);
 const VALID_AUTH_KEYS = new Set(["bearer_env"]);
 const VALID_RETRY_KEYS = new Set(["count", "backoff_ms"]);
@@ -274,6 +274,24 @@ function validateRequestShape(obj, ref, errors) {
       } else if (typeof param.default === "string" && param.default.length > param.maxLength) {
         errors.push(`${pref} default value is longer than "maxLength"`);
       }
+    }
+    for (const bound of ["minimum", "maximum"]) {
+      if (param[bound] === undefined) continue;
+      if (param.type !== "number" && param.type !== "integer") {
+        errors.push(`${pref} "${bound}" is only valid on number or integer params`);
+      }
+      if (typeof param[bound] !== "number" || !Number.isFinite(param[bound])) {
+        errors.push(`${pref} "${bound}" must be a finite number`);
+      }
+    }
+    const hasMin = typeof param.minimum === "number" && Number.isFinite(param.minimum);
+    const hasMax = typeof param.maximum === "number" && Number.isFinite(param.maximum);
+    if (hasMin && hasMax && param.minimum > param.maximum) {
+      errors.push(`${pref} "minimum" is greater than "maximum"`);
+    }
+    if (typeof param.default === "number") {
+      if (hasMin && param.default < param.minimum) errors.push(`${pref} default value is below "minimum"`);
+      if (hasMax && param.default > param.maximum) errors.push(`${pref} default value is above "maximum"`);
     }
   }
   if (obj.headers !== undefined && obj.headers !== null) {
@@ -521,6 +539,8 @@ export function configToTools(config) {
         ...(p.enum && { enum: p.enum }),
         ...(p.pattern !== undefined && { pattern: `^(?:${p.pattern})$` }),
         ...(p.maxLength !== undefined && { maxLength: p.maxLength }),
+        ...(p.minimum !== undefined && { minimum: p.minimum }),
+        ...(p.maximum !== undefined && { maximum: p.maximum }),
         ...(p.default !== undefined && { default: p.default }),
       };
       if (p.required) required.push(p.name);
@@ -740,7 +760,7 @@ function compileParamPattern(pattern) {
 }
 
 // The MCP SDK does not validate arguments against the advertised inputSchema, so anything a
-// param declares (enum, pattern, maxLength) has to be enforced here or it is only a hint.
+// param declares (enum, pattern, maxLength, minimum, maximum) has to be enforced here or it is only a hint.
 // `strict` additionally rejects unknown arguments and wrong types. Unknown arguments matter for
 // GET tools: they are appended to the query string, so a caller could otherwise add a second
 // `query=` next to one the config pinned in the URL.
@@ -767,6 +787,14 @@ export function validateArgs(params, args, { strict = false } = {}) {
     }
     if (param.maxLength !== undefined && String(value).length > param.maxLength) {
       return `argument "${name}" is longer than ${param.maxLength} characters`;
+    }
+    if (param.minimum !== undefined || param.maximum !== undefined) {
+      // Non-strict tools may receive a numeric string; a value that is not a number at all
+      // cannot be range-checked, so it fails rather than slipping past the bound.
+      const n = typeof value === "number" ? value : (typeof value === "string" && value.trim() !== "" ? Number(value) : NaN);
+      if (!Number.isFinite(n)) return `argument "${name}" must be a number`;
+      if (param.minimum !== undefined && n < param.minimum) return `argument "${name}" must be >= ${param.minimum}`;
+      if (param.maximum !== undefined && n > param.maximum) return `argument "${name}" must be <= ${param.maximum}`;
     }
   }
   if (strict) {

@@ -123,12 +123,14 @@ Retried failures are HTTP `408`, `429`, `500`, `502`, `503`, and `504`, request 
 | `default` | no | | Value used when param is omitted. It must match the effective param type, and if `enum` is set it must also be one of those values |
 | `pattern` | no | | Regular expression a string value must match **in full** (anchored as `^(?:pattern)$`). Enforced when the tool is called, and advertised to clients in the schema |
 | `maxLength` | no | | Maximum length of a string value. Enforced when the tool is called |
+| `minimum` | no | | Inclusive lower bound for a `number`/`integer` value. Enforced when the tool is called |
+| `maximum` | no | | Inclusive upper bound for a `number`/`integer` value. Enforced when the tool is called |
 
 When a param entry is present, it must be an object using only the fields above. Unsupported param keys are rejected at startup.
 
 ### Argument validation
 
-The MCP SDK does not validate arguments against the advertised schema, so this server does. `enum`, `pattern` and `maxLength` are enforced on every call: a violating argument fails the call before any HTTP request is made.
+The MCP SDK does not validate arguments against the advertised schema, so this server does. `enum`, `pattern`, `maxLength`, `minimum` and `maximum` are enforced on every call: a violating argument fails the call before any HTTP request is made.
 
 Set `strict: true` on a tool (or `strict_args: true` at the top of the config, for every tool) to additionally reject unknown arguments, wrong types and missing required arguments. Unknown arguments matter for `GET` tools, because they are appended to the query string: without `strict_args`, a caller could add a second `query=` next to one the config pinned in the URL.
 
