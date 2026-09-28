@@ -4222,3 +4222,55 @@ describe("per-tool strict", () => {
     assert.deepEqual(validateConfig({ tools: [{ name: "a", url: "http://x", strict: true }] }), []);
   });
 });
+
+// ── minimum / maximum ─────────────────────────────────────────────────────
+
+describe("minimum/maximum", () => {
+  const base = (param) => ({ tools: [{ name: "t", url: "http://x/", params: [{ name: "n", ...param }] }] });
+
+  it("is accepted on integer/number params and advertised in the schema", () => {
+    const cfg = base({ type: "integer", minimum: 1, maximum: 200, default: 50 });
+    assert.deepEqual(validateConfig(cfg), []);
+    const [tool] = configToTools(cfg);
+    assert.equal(tool.inputSchema.properties.n.minimum, 1);
+    assert.equal(tool.inputSchema.properties.n.maximum, 200);
+    assert.deepEqual(validateConfig(base({ type: "number", minimum: 0.5 })), []);
+  });
+
+  it("rejects bounds on non-numeric params, non-numbers, inverted bounds, and an out-of-range default", () => {
+    assert.match(validateConfig(base({ minimum: 1 })).join("\n"), /only valid on number or integer params/);
+    assert.match(validateConfig(base({ type: "string", maximum: 1 })).join("\n"), /only valid on number or integer params/);
+    assert.match(validateConfig(base({ type: "integer", minimum: "1" })).join("\n"), /must be a finite number/);
+    assert.match(validateConfig(base({ type: "integer", minimum: 5, maximum: 1 })).join("\n"), /greater than "maximum"/);
+    assert.match(validateConfig(base({ type: "integer", maximum: 10, default: 50 })).join("\n"), /above "maximum"/);
+    assert.match(validateConfig(base({ type: "integer", minimum: 10, default: 5 })).join("\n"), /below "minimum"/);
+  });
+
+  it("enforces both bounds inclusively at call time, strict or not", () => {
+    const params = [{ name: "n", type: "integer", minimum: 1, maximum: 200 }];
+    for (const opts of [{}, { strict: true }]) {
+      assert.equal(validateArgs(params, { n: 1 }, opts), null);
+      assert.equal(validateArgs(params, { n: 200 }, opts), null);
+      assert.match(validateArgs(params, { n: 0 }, opts), /must be >= 1/);
+      assert.match(validateArgs(params, { n: 201 }, opts), /must be <= 200/);
+    }
+    // A non-strict tool may get a numeric string; it is still range-checked, and a non-number fails.
+    assert.match(validateArgs(params, { n: "500" }), /must be <= 200/);
+    assert.equal(validateArgs(params, { n: "5" }), null);
+    assert.match(validateArgs(params, { n: "lots" }), /must be a number/);
+    assert.match(validateArgs(params, { n: "" }), /must be a number/);
+  });
+
+  it("callTool refuses an out-of-range argument before any request is made", async () => {
+    const saved = globalThis.fetch;
+    globalThis.fetch = async () => { throw new Error("must not be called"); };
+    try {
+      const cfg = base({ type: "integer", minimum: 1, maximum: 200 }).tools[0];
+      const r = await callTool(cfg, { n: 999 });
+      assert.equal(r.isError, true);
+      assert.match(r.text, /must be <= 200/);
+    } finally {
+      globalThis.fetch = saved;
+    }
+  });
+});
