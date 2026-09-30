@@ -23,6 +23,7 @@
 version: 2
 multi-ecosystem-groups:
   dependencies:
+    open-pull-requests-limit: 1    # the limit belongs on the group, not on its member entries
     schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Warsaw}
     commit-message: {prefix: fix, prefix-development: chore, include: scope}
 updates:
@@ -32,7 +33,6 @@ updates:
       # 7 days = the workspace's pnpm minimumReleaseAge (10080 min). Version
       # updates only -- security updates ignore cooldown by design.
       default-days: 7
-    open-pull-requests-limit: 1
     multi-ecosystem-group: dependencies
     patterns: ["*"]
     ignore:
@@ -48,7 +48,6 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     cooldown: {default-days: 7}
-    open-pull-requests-limit: 1
     multi-ecosystem-group: dependencies
     patterns: ["*"]
     ignore:
