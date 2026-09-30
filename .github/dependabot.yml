@@ -1,0 +1,55 @@
+# Dependabot for mcp-http-tools. Alerts + security updates are repo settings
+# (enabled separately); this file drives version updates, the labels and
+# commit-message that security PRs also inherit, and the grouping of both.
+#
+# Every ecosystem is grouped (3h4x, 2026-09-30): one security PR, one
+# minor+patch PR and one majors PR per ecosystem per run, instead of one PR
+# per package/advisory -- ungrouped, the PR count outgrows review.
+#
+# Only two ecosystems exist in this repo: npm (root package.json +
+# pnpm-lock.yaml, pnpm version taken from packageManager via corepack) and
+# github-actions. No Dockerfile, no compose, no Python/Go -- so no other entries.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories: ["/"]
+    schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Warsaw}
+    cooldown:
+      # 7 days = the workspace's pnpm minimumReleaseAge (10080 min). Version
+      # updates only -- security updates ignore cooldown by design.
+      default-days: 7
+    open-pull-requests-limit: 10  # version PRs only; security PRs are unlimited
+    labels: [dependencies, javascript]
+    # Conventional commits drive semantic-release (.releaserc): a runtime dep
+    # bump ships as a fix release, a dev-only bump as chore.
+    commit-message: {prefix: fix, prefix-development: chore, include: scope}
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      npm-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+      npm-major:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [major]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Warsaw}
+    cooldown: {default-days: 7}
+    open-pull-requests-limit: 5
+    labels: [dependencies, github_actions]
+    commit-message: {prefix: ci}
+    # Action refs are major-only tags (@v6), not full semver, so a
+    # minor/patch vs major split means nothing here: one version-updates
+    # group (no update-types) + the security group.
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
