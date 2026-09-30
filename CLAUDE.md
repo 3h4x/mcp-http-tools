@@ -109,6 +109,7 @@ pnpm start       # start MCP server (stdio)
 4. Run `pnpm audit` after any dependency change and resolve critical/high findings before committing.
 5. Never add packages with `postinstall` or `prepare` scripts without reviewing exactly what they execute.
 6. Prefer `pnpm` for install/update commands in both docs and local runs. Do not switch project instructions to `npm` while `packageManager` is pinned to `pnpm@10.33.0` and the repo lockfile is `pnpm-lock.yaml`. Note: consider upgrading to pnpm 11 when convenient.
+7. Dependabot: `.github/dependabot.yml` runs weekly npm + github-actions version updates with a 7-day cooldown (matching the workspace's pnpm `minimumReleaseAge`). Alerts and security updates are repo settings, already on. Security PRs skip the cooldown, so review them by hand and never auto-merge them. The deployed copy (infra.datacrash.io/mcp) installs from its own lockfile in `3h4x/infra` (`ansible/files/infra-mcp/`), not this one. A fix here reaches production only after a new tag and a ref bump in infra.
 
 ## Architecture / Banned Patterns
 
