@@ -1,55 +1,62 @@
 # Dependabot for mcp-http-tools. Alerts + security updates are repo settings
-# (enabled separately); this file drives version updates, the labels and
-# commit-message that security PRs also inherit, and the grouping of both.
+# (enabled separately); this file drives version updates, the labels that
+# security PRs also inherit, and the grouping of both.
 #
-# Every ecosystem is grouped (3h4x, 2026-09-30): one security PR, one
-# minor+patch PR and one majors PR per ecosystem per run, instead of one PR
-# per package/advisory -- ungrouped, the PR count outgrows review.
+# Security updates are grouped per ecosystem: one security PR per ecosystem
+# per run, instead of one PR per advisory.
 #
 # Only two ecosystems exist in this repo: npm (root package.json +
 # pnpm-lock.yaml, pnpm version taken from packageManager via corepack) and
 # github-actions. No Dockerfile, no compose, no Python/Go -- so no other entries.
+#
+# One Dependabot version-update PR at a time: the version updates of every
+# ecosystem below join the single `dependencies` multi-ecosystem group (one
+# weekly PR; open-pull-requests-limit: 1 on each entry), and semver-major
+# version updates are ignored so one breaking major cannot block that PR;
+# majors are bumped by hand. Security updates cannot join a multi-ecosystem
+# group, so they stay grouped per ecosystem (`applies-to: security-updates`);
+# open-pull-requests-limit and the major ignore do not apply to them.
+#
+# commit-message is a group-only option for a multi-ecosystem group, so it is
+# set once below. Conventional commits drive semantic-release (.releaserc): a
+# runtime dep bump ships as a fix release, a dev-only bump as chore.
 version: 2
+multi-ecosystem-groups:
+  dependencies:
+    schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Warsaw}
+    commit-message: {prefix: fix, prefix-development: chore, include: scope}
 updates:
   - package-ecosystem: npm
     directories: ["/"]
-    schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Warsaw}
     cooldown:
       # 7 days = the workspace's pnpm minimumReleaseAge (10080 min). Version
       # updates only -- security updates ignore cooldown by design.
       default-days: 7
-    open-pull-requests-limit: 10  # version PRs only; security PRs are unlimited
+    open-pull-requests-limit: 1
+    multi-ecosystem-group: dependencies
+    patterns: ["*"]
+    ignore:
+      # Majors are done by hand: one breaking major would hold up the single grouped PR.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels: [dependencies, javascript]
-    # Conventional commits drive semantic-release (.releaserc): a runtime dep
-    # bump ships as a fix release, a dev-only bump as chore.
-    commit-message: {prefix: fix, prefix-development: chore, include: scope}
     groups:
       npm-security:
         applies-to: security-updates
         patterns: ["*"]
-      npm-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: [minor, patch]
-      npm-major:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: [major]
 
   - package-ecosystem: github-actions
     directory: "/"
-    schedule: {interval: weekly, day: monday, time: "06:00", timezone: Europe/Warsaw}
     cooldown: {default-days: 7}
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
+    multi-ecosystem-group: dependencies
+    patterns: ["*"]
+    ignore:
+      # Majors are done by hand: one breaking major would hold up the single grouped PR.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels: [dependencies, github_actions]
-    commit-message: {prefix: ci}
-    # Action refs are major-only tags (@v6), not full semver, so a
-    # minor/patch vs major split means nothing here: one version-updates
-    # group (no update-types) + the security group.
     groups:
       actions-security:
         applies-to: security-updates
-        patterns: ["*"]
-      actions:
-        applies-to: version-updates
         patterns: ["*"]
