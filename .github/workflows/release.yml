@@ -37,7 +37,8 @@ jobs:
         run: pnpm test
 
       - name: Publish release
+        # Zero-dependency replacement for semantic-release; reads .releaserc as is.
+        uses: 3h4x/gha-semantic-tag-vanilla@79cc48684d2cacae369a4aace599b84bbf400984 # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec semantic-release

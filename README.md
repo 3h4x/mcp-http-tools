@@ -362,9 +362,9 @@ Pushes to `main` and pull requests also run `pnpm test` in GitHub Actions.
 
 ## Releasing
 
-`main` is released by GitHub Actions via semantic-release. Conventional commits on `main` determine the next version, create the GitHub release, and publish the package to npm. The same workflow can also be triggered manually from GitHub Actions when a maintainer needs to rerun a release on `main`.
+`main` is released by GitHub Actions via [gha-semantic-tag-vanilla](https://github.com/3h4x/gha-semantic-tag-vanilla), a zero-dependency drop-in for semantic-release that reads the same `.releaserc`. Conventional commits on `main` determine the next version, create the GitHub release, and publish the package to npm. The same workflow can also be triggered manually from GitHub Actions when a maintainer needs to rerun a release on `main`.
 
-The release workflow uses npm trusted publishing from GitHub Actions, so the job needs `id-token: write` permission and the package must be configured as a trusted publisher in npm for this repository.
+The release workflow publishes to GitHub Packages with the workflow's own `GITHUB_TOKEN` (passed as `NPM_TOKEN`), so the job needs `packages: write` permission; no npm token secret is involved.
 
 ## Stack
 
