@@ -38,7 +38,7 @@ jobs:
 
       - name: Publish release
         # Zero-dependency replacement for semantic-release; reads .releaserc as is.
-        uses: 3h4x/gha-semantic-tag-vanilla@79cc48684d2cacae369a4aace599b84bbf400984 # v1.0.0
+        uses: 3h4x/gha-semantic-tag-vanilla@4e4f073e022b7b1596003609ce748532f525541a # v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
