@@ -29,6 +29,8 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 | `extractResponse(raw, responseConfig)` | Formats response (text passthrough or JSON path extraction) |
 | `resolvePath(obj, path)` | Dot-notation object traversal |
 | `verifyBearerToken(authHeader, expectedToken)` | Constant-time bearer-token check used by the `--http` transport |
+| `createOauthVerifier(oauth)` | Async `(authHeader) => principal \| null` for OAuth JWT access tokens (`oauth:` block) |
+| `oauthResourceMetadata(oauth)` / `oauthResourceMetadataUrl(oauth)` | RFC 9728 document and its well-known URL |
 | `substituteEnvVars(str)` | `${VAR}` → `process.env.VAR` replacement |
 
 ## Config features
@@ -45,6 +47,7 @@ MCP client calls tool → callTool() ┬─► buildRequest() → fetch() (w/ ti
 - `retry.count` + `retry.backoff_ms` → opt-in retries for transient HTTP/network failures with exponential backoff
 - `pattern` / `maxLength` on string params + `enum` → enforced at call time (`validateArgs`), not just advertised; `strict_args: true` also rejects unknown args, wrong types and missing required args
 - `access:` list → extra bearer tokens (`token_env`) each restricted to a `tools` allowlist (`resolvePrincipals`/`authenticate`); `MCP_HTTP_TOKEN` stays unrestricted
+- `oauth:` block → OAuth sign-in for `--http`: RFC 9728 metadata at `/.well-known/oauth-protected-resource[/<path>]`, `WWW-Authenticate` on 401, RS256 JWT access tokens checked against the issuer's JWKS (`iss`, `aud`, `exp`/`nbf`, e-mail on `allowed_emails`, userinfo fallback) by `createOauthVerifier`; static tokens keep working
 - `--config /path/to/config.yaml` or `--config=/path/to/config.yaml` → explicit config override that fails fast on missing files or invalid YAML
 
 ## Commands

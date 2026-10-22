@@ -72,7 +72,7 @@ MCP_HTTP_TOKEN=some-long-random-token MCP_HTTP_PORT=3000 node index.js --http --
 ```
 
 - Listens on `<MCP_HTTP_HOST>:<MCP_HTTP_PORT>` (default `127.0.0.1:3000`), serving the MCP endpoint at `/mcp`. The loopback default is deliberate for a bare-host deploy behind a local reverse proxy; set `MCP_HTTP_HOST=0.0.0.0` when running in a container, where a Service/proxy routes to the container's own IP rather than the host's loopback.
-- `MCP_HTTP_TOKEN` is required when `--http` is passed; startup fails otherwise. Every request must send `Authorization: Bearer <MCP_HTTP_TOKEN>` or it gets a `401`.
+- `MCP_HTTP_TOKEN` is required when `--http` is passed; startup fails otherwise. Every request must send `Authorization: Bearer <MCP_HTTP_TOKEN>` (or an `access` token, or an OAuth access token, see [OAuth sign-in](#oauth-sign-in)) or it gets a `401`.
 - Stateless mode: no session is kept between requests.
 
 ## Config reference
@@ -223,6 +223,27 @@ Calling `project_overview` with `{ "namespace": "bonker" }` returns:
   "recent_errors": [ { "title": "...", "count": 3 }, ... ]
 }
 ```
+
+## OAuth sign-in
+
+An `oauth:` block lets MCP clients that sign users in with OAuth (for example a hosted connector that asks for an OAuth Client ID) call the `--http` transport without a static token. The server stays a resource server only: users sign in at your OpenID Connect provider, and the server checks the access token it gets.
+
+```yaml
+oauth:
+  issuer: https://id.example.com          # the provider's issuer (iss)
+  audience: my-mcp                        # the client id registered there; must be in the token's aud
+  resource: https://mcp.example.com/mcp   # the public URL of this server's /mcp endpoint
+  allowed_emails: [you@example.com]       # who may sign in
+  # jwks_uri: https://id.example.com/.well-known/jwks.json      (this is the default)
+  # userinfo_uri: https://id.example.com/userinfo               (used when the token has no email claim)
+  # tools: [some_tool]                    # optional allowlist, like an access entry
+```
+
+- `GET /.well-known/oauth-protected-resource` (and the same path followed by the resource path, e.g. `/.well-known/oauth-protected-resource/mcp`) returns RFC 9728 metadata naming `issuer` as the authorization server. No token is needed.
+- A request with no valid credentials gets `401` with `WWW-Authenticate: Bearer resource_metadata="<that URL>"`, which is how a client finds the provider.
+- Accepted tokens: RS256 JWTs signed by a key in the provider's JWKS, with `iss` = `issuer`, `aud` containing `audience`, a valid `exp`/`nbf` (60 s clock skew), and an e-mail on `allowed_emails` (case-insensitive). The e-mail comes from the token's `email` claim, else from `userinfo_uri` (its `sub` must match). The JWKS is cached for 10 minutes and refetched at most once a minute for an unknown `kid`.
+- `MCP_HTTP_TOKEN` and `access` tokens keep working alongside it. Every `issuer`, `resource`, `jwks_uri` and `userinfo_uri` must be https.
+- If your provider has no dynamic client registration, register a public client with PKCE yourself and enter its id in the MCP client.
 
 ## Examples
 

@@ -3,7 +3,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, createPublicKey, createHash, verify as verifySignature } from "node:crypto";
 import yaml from "js-yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -455,6 +455,162 @@ export function authenticate(authHeader, principals) {
   return match;
 }
 
+const VALID_OAUTH_KEYS = new Set(["issuer", "audience", "resource", "allowed_emails", "jwks_uri", "userinfo_uri", "tools"]);
+const OAUTH_URL_KEYS = ["issuer", "resource", "jwks_uri", "userinfo_uri"];
+const JWKS_TTL_MS = 10 * 60_000;
+const JWKS_MIN_REFETCH_MS = 60_000;
+const CLOCK_SKEW_S = 60;
+const USERINFO_CACHE_MAX = 1000;
+
+function isHttpsUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function validateOauth(config, errors) {
+  const oauth = config.oauth;
+  if (oauth === undefined || oauth === null) return;
+  if (typeof oauth !== "object" || Array.isArray(oauth)) {
+    errors.push('"oauth" must be an object');
+    return;
+  }
+  for (const key of Object.keys(oauth)) {
+    if (!VALID_OAUTH_KEYS.has(key)) errors.push(`oauth: has unsupported field "${key}"`);
+  }
+  for (const key of OAUTH_URL_KEYS) {
+    const required = key === "issuer" || key === "resource";
+    if (oauth[key] === undefined && !required) continue;
+    if (!isHttpsUrl(oauth[key])) errors.push(`oauth: "${key}" must be an https URL`);
+  }
+  if (typeof oauth.audience !== "string" || !oauth.audience) errors.push('oauth: "audience" must be a non-empty string');
+  if (!Array.isArray(oauth.allowed_emails) || oauth.allowed_emails.length === 0
+    || !oauth.allowed_emails.every(e => typeof e === "string" && e.includes("@"))) {
+    errors.push('oauth: "allowed_emails" must be a non-empty array of e-mail addresses');
+  }
+  if (oauth.tools !== undefined) {
+    const toolNames = new Set((Array.isArray(config.tools) ? config.tools : []).map(t => t?.name));
+    if (!Array.isArray(oauth.tools) || oauth.tools.length === 0) {
+      errors.push('oauth: "tools" must be a non-empty array of tool names');
+    } else {
+      for (const t of oauth.tools) {
+        if (!toolNames.has(t)) errors.push(`oauth: unknown tool "${t}"`);
+      }
+    }
+  }
+}
+
+// RFC 9728 protected-resource metadata. Served unauthenticated so an MCP client can find
+// the authorization server it should send the user to.
+export function oauthResourceMetadata(oauth) {
+  return {
+    resource: oauth.resource,
+    authorization_servers: [oauth.issuer],
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["openid", "profile", "email"],
+  };
+}
+
+// The well-known URL of that document for this resource (RFC 9728 section 3.1: the
+// resource's path, if any, is appended after the well-known segment).
+export function oauthResourceMetadataUrl(oauth) {
+  const url = new URL(oauth.resource);
+  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "");
+  return `${url.origin}/.well-known/oauth-protected-resource${path}`;
+}
+
+function base64UrlJson(part) {
+  return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+}
+
+// Returns an async (authHeader) => principal | null that accepts an RS256 JWT access token
+// from `oauth.issuer`: signature against its JWKS, iss, aud, exp/nbf, and the user's e-mail
+// (from the token, else the userinfo endpoint) on `allowed_emails`. Never throws: any
+// failure is a null (= 401), logged without the token.
+export function createOauthVerifier(oauth, { fetchImpl = fetch, now = () => Date.now(), log = () => {} } = {}) {
+  const issuer = oauth.issuer.replace(/\/$/, "");
+  const jwksUri = oauth.jwks_uri ?? `${issuer}/.well-known/jwks.json`;
+  const userinfoUri = oauth.userinfo_uri ?? null;
+  const allowed = new Set(oauth.allowed_emails.map(e => e.toLowerCase()));
+  const tools = oauth.tools ? new Set(oauth.tools) : null;
+  let keys = new Map();
+  let fetchedAt = 0;
+  const emails = new Map();
+
+  async function loadKeys() {
+    // Stamped before the fetch, so a failing or slow JWKS is not refetched on every request.
+    fetchedAt = now();
+    const res = await fetchImpl(jwksUri, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`JWKS ${jwksUri} -> HTTP ${res.status}`);
+    const body = await res.json();
+    const next = new Map();
+    for (const jwk of body.keys ?? []) {
+      if (jwk.kty !== "RSA" || (jwk.use && jwk.use !== "sig") || !jwk.kid) continue;
+      next.set(jwk.kid, createPublicKey({ key: jwk, format: "jwk" }));
+    }
+    keys = next;
+  }
+
+  async function keyFor(kid) {
+    const age = now() - fetchedAt;
+    if (age > JWKS_TTL_MS || (!keys.has(kid) && age > JWKS_MIN_REFETCH_MS)) await loadKeys();
+    return keys.get(kid) ?? null;
+  }
+
+  async function emailFor(token, claims) {
+    if (typeof claims.email === "string") return claims.email;
+    if (!userinfoUri) return null;
+    const cacheKey = createHash("sha256").update(token).digest("hex");
+    const cached = emails.get(cacheKey);
+    if (cached) return cached.email;
+    const res = await fetchImpl(userinfoUri, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`userinfo -> HTTP ${res.status}`);
+    const info = await res.json();
+    if (info.sub !== claims.sub) throw new Error("userinfo sub does not match the token");
+    const email = typeof info.email === "string" ? info.email : null;
+    if (emails.size >= USERINFO_CACHE_MAX) emails.clear();
+    emails.set(cacheKey, { email });
+    return email;
+  }
+
+  return async function verifyOauthToken(authHeader) {
+    if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) return null;
+    const token = authHeader.slice("Bearer ".length);
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      const header = base64UrlJson(parts[0]);
+      const claims = base64UrlJson(parts[1]);
+      if (header.alg !== "RS256") return null;
+      const key = await keyFor(header.kid);
+      if (!key) return null;
+      const signed = Buffer.from(`${parts[0]}.${parts[1]}`);
+      if (!verifySignature("RSA-SHA256", signed, key, Buffer.from(parts[2], "base64url"))) return null;
+      const nowS = now() / 1000;
+      if (claims.iss !== issuer && claims.iss !== oauth.issuer) return null;
+      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+      if (!aud.includes(oauth.audience)) return null;
+      if (typeof claims.exp !== "number" || claims.exp + CLOCK_SKEW_S < nowS) return null;
+      if (typeof claims.nbf === "number" && claims.nbf - CLOCK_SKEW_S > nowS) return null;
+      const email = await emailFor(token, claims);
+      if (!email || !allowed.has(email.toLowerCase())) {
+        log(`oauth: sub=${claims.sub} is not an allowed user`);
+        return null;
+      }
+      return { name: `oauth:${email.toLowerCase()}`, token: null, tools };
+    } catch (err) {
+      log(`oauth: token rejected (${err.message})`);
+      return null;
+    }
+  };
+}
+
 export function validateConfig(config) {
   const errors = [];
   if (config.tools != null && !Array.isArray(config.tools)) {
@@ -462,6 +618,7 @@ export function validateConfig(config) {
     return errors;
   }
   validateAccess(config, errors);
+  validateOauth(config, errors);
   const seenNames = new Set();
   for (const [i, tool] of (config.tools ?? []).entries()) {
     if (tool == null || typeof tool !== "object" || Array.isArray(tool)) {

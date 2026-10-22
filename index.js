@@ -4,7 +4,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig, validateConfig, configToTools, callTool, resolvePrincipals, authenticate } from "./lib.js";
+import { loadConfig, validateConfig, configToTools, callTool, resolvePrincipals, authenticate, createOauthVerifier, oauthResourceMetadata, oauthResourceMetadataUrl } from "./lib.js";
 
 let config;
 try {
@@ -66,10 +66,22 @@ if (process.argv.includes("--http")) {
   }
 
   const host = process.env.MCP_HTTP_HOST ?? "127.0.0.1";
+  const oauth = config.oauth ?? null;
+  const verifyOauth = oauth && createOauthVerifier(oauth, { log: msg => process.stderr.write(`[mcp-http-tools] ${msg}\n`) });
+  const metadataUrl = oauth && oauthResourceMetadataUrl(oauth);
+  const metadataPaths = oauth && new Set([new URL(metadataUrl).pathname, "/.well-known/oauth-protected-resource"]);
   const httpServer = createHttpServer(async (req, res) => {
-    const principal = authenticate(req.headers.authorization, principals);
+    if (oauth && req.method === "GET" && metadataPaths.has(req.url)) {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(oauthResourceMetadata(oauth)));
+      return;
+    }
+    const principal = authenticate(req.headers.authorization, principals)
+      ?? (verifyOauth ? await verifyOauth(req.headers.authorization) : null);
     if (!principal) {
-      res.writeHead(401, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Unauthorized" }));
+      res.writeHead(401, {
+        "Content-Type": "application/json",
+        ...(oauth && { "WWW-Authenticate": `Bearer resource_metadata="${metadataUrl}"` }),
+      }).end(JSON.stringify({ error: "Unauthorized" }));
       return;
     }
     if (req.url !== "/mcp") {

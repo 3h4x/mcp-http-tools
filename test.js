@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool, verifyBearerToken, validateArgs, resolvePrincipals, authenticate } from "./lib.js";
+import { generateKeyPairSync, sign as signData } from "node:crypto";
+import { resolvePath, substituteEnvVars, configToTools, buildRequest, extractResponse, loadConfig, validateConfig, callTool, verifyBearerToken, validateArgs, resolvePrincipals, authenticate, createOauthVerifier, oauthResourceMetadata, oauthResourceMetadataUrl } from "./lib.js";
 
 const realFetch = globalThis.fetch;
 
@@ -4272,5 +4273,215 @@ describe("minimum/maximum", () => {
     } finally {
       globalThis.fetch = saved;
     }
+  });
+});
+
+// ── OAuth (oauth:) ───────────────────────────────────────────────────────────
+
+const OAUTH = {
+  issuer: "https://id.example.com",
+  audience: "my-mcp",
+  resource: "https://mcp.example.com/mcp",
+  allowed_emails: ["Owner@example.com"],
+};
+
+describe("validateConfig oauth", () => {
+  it("accepts a complete oauth block", () => {
+    assert.deepEqual(validateConfig({ tools: [], oauth: OAUTH }), []);
+  });
+
+  it("rejects missing or non-https fields, unknown keys and an empty allow list", () => {
+    const errors = validateConfig({ tools: [], oauth: { issuer: "http://id.example.com", resource: "nope", allowed_emails: [], extra: 1 } });
+    assert.deepEqual(errors, [
+      'oauth: has unsupported field "extra"',
+      'oauth: "issuer" must be an https URL',
+      'oauth: "resource" must be an https URL',
+      'oauth: "audience" must be a non-empty string',
+      'oauth: "allowed_emails" must be a non-empty array of e-mail addresses',
+    ]);
+  });
+
+  it("rejects an unknown tool in the oauth allowlist", () => {
+    const errors = validateConfig({ tools: [{ name: "a", url: "http://x" }], oauth: { ...OAUTH, tools: ["b"] } });
+    assert.deepEqual(errors, ['oauth: unknown tool "b"']);
+  });
+});
+
+describe("oauthResourceMetadata", () => {
+  it("points at the issuer and names the resource", () => {
+    assert.deepEqual(oauthResourceMetadata(OAUTH), {
+      resource: "https://mcp.example.com/mcp",
+      authorization_servers: ["https://id.example.com"],
+      bearer_methods_supported: ["header"],
+      scopes_supported: ["openid", "profile", "email"],
+    });
+  });
+});
+
+describe("oauthResourceMetadataUrl", () => {
+  it("appends the resource path after the well-known segment", () => {
+    assert.equal(oauthResourceMetadataUrl(OAUTH), "https://mcp.example.com/.well-known/oauth-protected-resource/mcp");
+  });
+
+  it("has no suffix for a root resource", () => {
+    assert.equal(oauthResourceMetadataUrl({ ...OAUTH, resource: "https://mcp.example.com/" }), "https://mcp.example.com/.well-known/oauth-protected-resource");
+  });
+});
+
+describe("createOauthVerifier", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const other = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  let idp, base, jwksHits, userinfo;
+
+  const jwt = (claims, { kid = "k1", key = privateKey, alg = "RS256" } = {}) => {
+    const enc = o => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const head = `${enc({ alg, kid, typ: "JWT" })}.${enc(claims)}`;
+    return `${head}.${signData("RSA-SHA256", Buffer.from(head), key).toString("base64url")}`;
+  };
+  const nowS = () => Math.floor(Date.now() / 1000);
+  const good = (extra = {}) => ({ iss: OAUTH.issuer, aud: "my-mcp", sub: "u1", exp: nowS() + 300, email: "owner@example.com", ...extra });
+
+  beforeEach(async () => {
+    jwksHits = 0;
+    userinfo = { sub: "u1", email: "owner@example.com" };
+    idp = createServer((req, res) => {
+      if (req.url === "/jwks") {
+        jwksHits++;
+        res.end(JSON.stringify({ keys: [{ ...publicKey.export({ format: "jwk" }), kid: "k1", use: "sig" }] }));
+      } else if (req.url === "/userinfo") {
+        res.end(JSON.stringify(userinfo));
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    await new Promise(r => idp.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${idp.address().port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise(r => idp.close(r));
+  });
+
+  const verifier = (extra = {}) => createOauthVerifier({ ...OAUTH, jwks_uri: `${base}/jwks`, userinfo_uri: `${base}/userinfo`, ...extra });
+
+  it("accepts a valid token and names the principal by e-mail", async () => {
+    const p = await verifier()(`Bearer ${jwt(good())}`);
+    assert.deepEqual(p, { name: "oauth:owner@example.com", token: null, tools: null });
+  });
+
+  it("restricts the principal to oauth.tools when set", async () => {
+    const p = await verifier({ tools: ["a"] })(`Bearer ${jwt(good())}`);
+    assert.deepEqual([...p.tools], ["a"]);
+  });
+
+  it("accepts aud as an array", async () => {
+    assert.ok(await verifier()(`Bearer ${jwt(good({ aud: ["other", "my-mcp"] }))}`));
+  });
+
+  it("rejects wrong aud, wrong iss, expired, not-yet-valid and missing exp", async () => {
+    const v = verifier();
+    for (const claims of [good({ aud: "other" }), good({ iss: "https://evil.example.com" }), good({ exp: nowS() - 120 }), good({ nbf: nowS() + 600 }), good({ exp: undefined })]) {
+      assert.equal(await v(`Bearer ${jwt(claims)}`), null);
+    }
+  });
+
+  it("rejects a bad signature, an unknown kid, alg none and non-JWT tokens", async () => {
+    const v = verifier();
+    assert.equal(await v(`Bearer ${jwt(good(), { key: other.privateKey })}`), null);
+    assert.equal(await v(`Bearer ${jwt(good(), { kid: "k2" })}`), null);
+    const [h, c] = jwt(good()).split(".");
+    const none = `${Buffer.from(JSON.stringify({ alg: "none", kid: "k1" })).toString("base64url")}.${c}.`;
+    assert.equal(await v(`Bearer ${none}`), null);
+    assert.equal(await v(`Bearer ${h}.${c}`), null);
+    assert.equal(await v("Bearer static-token"), null);
+    assert.equal(await v(undefined), null);
+  });
+
+  it("rejects a user that is not on allowed_emails", async () => {
+    assert.equal(await verifier()(`Bearer ${jwt(good({ email: "someone@example.com" }))}`), null);
+  });
+
+  it("looks the e-mail up at userinfo when the token has none, and checks its sub", async () => {
+    const v = verifier();
+    assert.ok(await v(`Bearer ${jwt(good({ email: undefined }))}`));
+    userinfo = { sub: "u2", email: "owner@example.com" };
+    assert.equal(await v(`Bearer ${jwt(good({ email: undefined, jti: "x" }))}`), null);
+  });
+
+  it("rejects a token without e-mail when no userinfo_uri is set", async () => {
+    assert.equal(await verifier({ userinfo_uri: undefined })(`Bearer ${jwt(good({ email: undefined }))}`), null);
+  });
+
+  it("caches the JWKS and does not refetch it on every unknown kid", async () => {
+    const v = verifier();
+    await v(`Bearer ${jwt(good())}`);
+    await v(`Bearer ${jwt(good())}`);
+    await v(`Bearer ${jwt(good(), { kid: "k9" })}`);
+    assert.equal(jwksHits, 1);
+  });
+
+  it("returns null instead of throwing when the JWKS is unreachable", async () => {
+    const v = createOauthVerifier({ ...OAUTH, jwks_uri: "http://127.0.0.1:1/jwks" });
+    assert.equal(await v(`Bearer ${jwt(good())}`), null);
+  });
+});
+
+describe("oauth over HTTP", () => {
+  let dir, child, port;
+
+  beforeEach(async () => {
+    dir = join(tmpdir(), `mcp-oauth-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "c.yaml"), `
+tools:
+  - name: open_tool
+    url: http://127.0.0.1:1/open
+oauth:
+  issuer: https://id.example.com
+  audience: my-mcp
+  resource: https://mcp.example.com/mcp
+  allowed_emails: [owner@example.com]
+`);
+    port = 39500 + Math.floor(Math.random() * 400);
+    child = spawn("node", ["index.js", "--http", "--config", join(dir, "c.yaml")], {
+      env: { ...process.env, MCP_HTTP_TOKEN: "a".repeat(40), MCP_HTTP_PORT: String(port) },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    await new Promise((resolve, reject) => {
+      child.stderr.on("data", d => { if (String(d).includes("listening")) resolve(); });
+      child.on("exit", c => reject(new Error(`exited ${c}`)));
+    });
+  });
+
+  afterEach(() => {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("serves the protected-resource metadata without a token, at both well-known paths", async () => {
+    for (const path of ["/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource"]) {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), {
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: ["https://id.example.com"],
+        bearer_methods_supported: ["header"],
+        scopes_supported: ["openid", "profile", "email"],
+      });
+    }
+  });
+
+  it("answers 401 with a WWW-Authenticate header naming the metadata", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST" });
+    assert.equal(res.status, 401);
+    assert.equal(res.headers.get("www-authenticate"), 'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"');
+  });
+
+  it("still accepts the static MCP_HTTP_TOKEN", async () => {
+    const client = new Client({ name: "t", version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${"a".repeat(40)}` } },
+    }));
+    assert.deepEqual((await client.listTools()).tools.map(t => t.name), ["open_tool"]);
   });
 });
